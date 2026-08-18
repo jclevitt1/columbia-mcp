@@ -1,0 +1,21 @@
+{
+  "name": "columbia-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server + Telegram bridge so the Mac Mini can do Columbia work (CourseWorks, Vergil, mail) on Jeremy's behalf, with a human check-off on anything that leaves the machine.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "mcp": "node src/mcp/server.js",
+    "bridge": "node src/bridge/telegram.js",
+    "vergil-login": "node scripts/vergil-login.js",
+    "doctor": "node scripts/doctor.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

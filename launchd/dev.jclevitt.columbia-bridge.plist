@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps the Telegram bridge alive on the Mac Mini.
+
+  Install:
+    cp launchd/dev.jclevitt.columbia-bridge.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/dev.jclevitt.columbia-bridge.plist
+
+  A LaunchAgent (not a Daemon) on purpose: it runs in your GUI session, which
+  is what lets Playwright open a real browser window and what makes Mail.app
+  automation possible at all.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.jclevitt.columbia-bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/jeremylevitt/workspace/Columbia/columbia-mcp/src/bridge/telegram.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jeremylevitt/workspace/Columbia/columbia-mcp</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/jeremylevitt/.local/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jeremylevitt/.columbia-mcp/logs/bridge.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jeremylevitt/.columbia-mcp/logs/bridge.err.log</string>
+</dict>
+</plist>

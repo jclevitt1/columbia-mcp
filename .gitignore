@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# State lives in ~/.columbia-mcp, but guard against COLUMBIA_MCP_HOME=.
+sessions.json
+approvals.json
+browser-profile/
