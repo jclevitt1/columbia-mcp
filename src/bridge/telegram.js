@@ -97,8 +97,23 @@ If a tool reports it is unconfigured, say so plainly and name the setup step.
 Do not guess at data you could not fetch.
 `.trim();
 
-/** Built-in tools the session gets on top of whatever columbia-mcp exposes. */
-const BUILTIN_TOOLS = ['Read', 'Glob', 'Grep'];
+/**
+ * Built-in tools the session gets on top of whatever columbia-mcp exposes.
+ *
+ * Read/Glob/Grep/Write/Edit, and deliberately not Bash. This agent routinely
+ * ingests text written by other people — mail_read, vergil_browse and
+ * canvas_announcements all return attacker-controllable content into the same
+ * context that holds a live Gmail token. File tools confine the blast radius
+ * of a prompt injection to files; Bash does not confine it to anything.
+ *
+ * Widen with BRIDGE_EXTRA_TOOLS=Bash if you decide you want that, rather than
+ * reaching for --dangerously-skip-permissions, which drops the sandbox for
+ * every tool at once instead of the one you actually wanted.
+ */
+const BUILTIN_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit'];
+
+const EXTRA_TOOLS = (process.env.BRIDGE_EXTRA_TOOLS || '')
+  .split(',').map((t) => t.trim()).filter(Boolean);
 
 /**
  * Ask the MCP server what it actually exposes, rather than keeping a hand
@@ -149,9 +164,9 @@ async function discoverTools() {
 
   if (!names.length) {
     console.error('tool discovery failed; falling back to built-ins only');
-    allowedToolsCache = BUILTIN_TOOLS;
+    allowedToolsCache = [...BUILTIN_TOOLS, ...EXTRA_TOOLS];
   } else {
-    allowedToolsCache = [...names.map((n) => `mcp__columbia__${n}`), ...BUILTIN_TOOLS];
+    allowedToolsCache = [...names.map((n) => `mcp__columbia__${n}`), ...BUILTIN_TOOLS, ...EXTRA_TOOLS];
   }
   return allowedToolsCache;
 }
