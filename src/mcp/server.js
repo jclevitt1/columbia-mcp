@@ -103,6 +103,32 @@ tool('canvas_grades', {
   inputSchema: {},
 }, () => canvas.grades());
 
+tool('canvas_syllabus', {
+  title: 'Course syllabus',
+  description: 'The Syllabus page for a course, plus any files it links to. Columbia instructors usually attach a PDF rather than typing the syllabus in, so check `attachments` and follow up with canvas_file_download.',
+  inputSchema: { courseId: z.union([z.string(), z.number()]) },
+}, ({ courseId }) => canvas.syllabus({ courseId }));
+
+tool('canvas_files', {
+  title: 'List course files',
+  description: 'Files uploaded to a course, newest first. Optionally filter by name.',
+  inputSchema: {
+    courseId: z.union([z.string(), z.number()]),
+    query: z.string().optional().describe('Filter by filename, e.g. "syllabus"'),
+    limit: z.number().optional(),
+  },
+}, ({ courseId, query, limit }) => canvas.listFiles({ courseId, query, limit }));
+
+tool('canvas_file_download', {
+  title: 'Download a course file',
+  description: 'Download a course file to local disk and return its path, so it can be opened with a file reader. Handles PDFs, slides and problem sets.',
+  inputSchema: {
+    courseId: z.union([z.string(), z.number()]),
+    fileId: z.union([z.string(), z.number()]),
+    destDir: z.string().optional(),
+  },
+}, ({ courseId, fileId, destDir }) => canvas.downloadFile({ courseId, fileId, destDir }));
+
 /* ---------------- Vergil / Directory of Classes ---------------- */
 
 tool('vergil_search', {

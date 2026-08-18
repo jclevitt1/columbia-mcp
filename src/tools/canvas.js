@@ -1,4 +1,6 @@
-import { CONFIG } from '../config.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { CONFIG, PATHS } from '../config.js';
 
 /**
  * CourseWorks (Canvas LMS) read client.
@@ -177,6 +179,65 @@ export async function grades() {
         currentGrade: e.computed_current_grade ?? null,
       };
     });
+}
+
+/**
+ * The Syllabus page. Columbia instructors overwhelmingly use it as a stub
+ * pointing at an uploaded PDF, so return the linked files as well as the
+ * body text — otherwise the answer is usually "See attached file:".
+ */
+export async function syllabus({ courseId }) {
+  const c = await canvasGet(`courses/${courseId}`, { params: { include: ['syllabus_body'] } });
+  const html = c.syllabus_body || '';
+  const attachments = [];
+  const re = /data-api-endpoint="([^"]*\/files\/(\d+))"[^>]*/g;
+  for (const m of html.matchAll(/<a[^>]+>/g)) {
+    const tag = m[0];
+    const id = tag.match(/\/files\/(\d+)/);
+    const title = tag.match(/title="([^"]+)"/);
+    if (id) attachments.push({ fileId: Number(id[1]), name: title ? title[1] : null });
+  }
+  return {
+    courseId,
+    course: c.name,
+    text: stripHtml(html),
+    attachments,
+    url: `${CONFIG.canvasBase}/courses/${courseId}/assignments/syllabus`,
+  };
+}
+
+/** Course files, optionally filtered by name. */
+export async function listFiles({ courseId, query = null, limit = 100 }) {
+  const raw = await canvasGet(`courses/${courseId}/files`, {
+    params: { search_term: query || undefined, sort: 'created_at', order: 'desc' },
+  });
+  return raw.slice(0, limit).map((f) => ({
+    fileId: f.id,
+    name: f.display_name,
+    contentType: f['content-type'],
+    size: f.size,
+    updated: f.updated_at,
+  }));
+}
+
+/**
+ * Download a course file to disk and return the path.
+ *
+ * Deliberately does not try to parse PDFs — the calling agent already has a
+ * file reader that handles them properly, and reimplementing PDF extraction
+ * here would be strictly worse.
+ */
+export async function downloadFile({ courseId, fileId, destDir }) {
+  const meta = await canvasGet(`courses/${courseId}/files/${fileId}`);
+  const res = await fetch(meta.url); // pre-signed; no auth header needed
+  if (!res.ok) throw new CanvasError(`download failed: HTTP ${res.status}`);
+
+  const dir = destDir || path.join(PATHS.home, 'downloads', String(courseId));
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, meta.display_name.replace(/[/\\]/g, '_'));
+  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+
+  return { path: dest, name: meta.display_name, contentType: meta['content-type'], size: meta.size };
 }
 
 export async function whoami() {
