@@ -97,25 +97,64 @@ If a tool reports it is unconfigured, say so plainly and name the setup step.
 Do not guess at data you could not fetch.
 `.trim();
 
-const ALLOWED_TOOLS = [
-  'mcp__columbia__canvas_courses',
-  'mcp__columbia__canvas_assignments',
-  'mcp__columbia__canvas_upcoming',
-  'mcp__columbia__canvas_todo',
-  'mcp__columbia__canvas_announcements',
-  'mcp__columbia__canvas_grades',
-  'mcp__columbia__vergil_search',
-  'mcp__columbia__vergil_browse',
-  'mcp__columbia__vergil_session_status',
-  'mcp__columbia__mail_search',
-  'mcp__columbia__mail_read',
-  'mcp__columbia__mail_draft',
-  'mcp__columbia__mail_request_send',
-  'mcp__columbia__approvals_list',
-  'Read',
-  'Glob',
-  'Grep',
-];
+/** Built-in tools the session gets on top of whatever columbia-mcp exposes. */
+const BUILTIN_TOOLS = ['Read', 'Glob', 'Grep'];
+
+/**
+ * Ask the MCP server what it actually exposes, rather than keeping a hand
+ * written list in sync with it.
+ *
+ * This exists because the hand-written version silently rotted: three Canvas
+ * tools were added to the server and the bridge kept denying them, which
+ * surfaced to Jeremy as "permission denied" rather than "tool missing" — a
+ * confusing failure a long way from its cause. Discovery makes that class of
+ * bug impossible.
+ */
+let allowedToolsCache = null;
+
+async function discoverTools() {
+  if (allowedToolsCache) return allowedToolsCache;
+
+  const names = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'src', 'mcp', 'server.js')], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      env: process.env,
+    });
+    let buf = '';
+    const timer = setTimeout(() => { child.kill(); resolve([]); }, 15000);
+
+    child.stdout.on('data', (d) => {
+      buf += d;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.id === 1) {
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`);
+        } else if (msg.id === 2) {
+          clearTimeout(timer);
+          child.kill();
+          resolve((msg.result?.tools ?? []).map((t) => t.name));
+        }
+      }
+    });
+    child.on('error', () => { clearTimeout(timer); resolve([]); });
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'bridge', version: '1' } },
+    })}\n`);
+  });
+
+  if (!names.length) {
+    console.error('tool discovery failed; falling back to built-ins only');
+    allowedToolsCache = BUILTIN_TOOLS;
+  } else {
+    allowedToolsCache = [...names.map((n) => `mcp__columbia__${n}`), ...BUILTIN_TOOLS];
+  }
+  return allowedToolsCache;
+}
 
 function mcpConfig() {
   return JSON.stringify({
@@ -133,15 +172,16 @@ function mcpConfig() {
  * Run one turn. Resumes the chat's session when we have one so context
  * carries across texts; otherwise starts fresh and records the new id.
  */
-function runClaude(chatId, prompt) {
+async function runClaude(chatId, prompt) {
   const prior = sessions.getSession(chatId);
+  const allowed = await discoverTools();
   const args = [
     '-p', prompt,
     '--output-format', 'json',
     '--mcp-config', mcpConfig(),
     '--strict-mcp-config',
     '--append-system-prompt', SYSTEM_APPEND,
-    '--allowedTools', ...ALLOWED_TOOLS,
+    '--allowedTools', ...allowed,
     '--permission-mode', process.env.CLAUDE_PERMISSION_MODE || 'dontAsk',
   ];
   if (prior?.sessionId) args.push('--resume', prior.sessionId);
@@ -315,7 +355,9 @@ async function main() {
   if (!CONFIG.telegramOwnerId) throw new Error('TELEGRAM_OWNER_CHAT_ID is not set — refusing to run an open bot.');
 
   const me = await tg('getMe', {});
+  const tools = await discoverTools();
   console.log(`columbia bridge up as @${me.username}; owner chat ${CONFIG.telegramOwnerId}`);
+  console.log(`${tools.length} tools allowed: ${tools.join(', ')}`);
 
   // Skip whatever piled up while we were down — replaying old texts as fresh
   // commands is worse than dropping them.
