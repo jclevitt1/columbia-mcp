@@ -139,18 +139,87 @@ export async function login({ startUrl = 'https://vergil.registrar.columbia.edu/
 }
 
 /**
- * Course search.
- *
- * NOTE: the URL template is configurable because I could not confirm Vergil's
- * live query-string scheme from behind the challenge. Verify it once on the
- * Mini and, if it differs, set VERGIL_SEARCH_URL in .env — no code change.
+ * Term code used by the Directory of Classes: year + season digit,
+ * where 1=Spring, 2=Summer, 3=Fall. "Fall 2026" -> 20263.
+ * Confirmed against the live <select name="semes"> options.
  */
-export async function searchCourses({ query, term = '' }) {
-  const template = process.env.VERGIL_SEARCH_URL
-    || 'https://vergil.registrar.columbia.edu/#/search?q={query}&term={term}';
-  const url = template
-    .replace('{query}', encodeURIComponent(query))
-    .replace('{term}', encodeURIComponent(term));
-  const page = await browse(url, { waitFor: 'main, [class*=result], [class*=course]' });
-  return { query, term, ...page };
+export function termCode(term) {
+  if (!term) return '';
+  if (/^\d{5}$/.test(term.trim())) return term.trim();
+  const m = term.trim().match(/(spring|summer|fall|autumn)\s+(\d{4})/i);
+  if (!m) return '';
+  const season = { spring: '1', summer: '2', fall: '3', autumn: '3' }[m[1].toLowerCase()];
+  return `${m[2]}${season}`;
+}
+
+/**
+ * Search the Directory of Classes.
+ *
+ * Verified live 2026-08-17: doc.sis.columbia.edu's keyword form GETs
+ * https://doc.search.columbia.edu/search?q=...&semes=<code>, and each hit
+ * renders as a div.col-md-11 holding a title link of the form
+ * #subj/STAT/GR5204-20263-001/, a description, and a section table.
+ *
+ * Public — no CAS login needed. Only Cloudflare stands in the way, which is
+ * why this still goes through the browser. Note the DOC itself warns that
+ * meeting days/times now live only in Vergil, so use vergil_browse (logged
+ * in) when the question is about scheduling rather than catalog content.
+ */
+export async function searchCourses({ query, term = '', limit = 25 }) {
+  const url = new URL('https://doc.search.columbia.edu/search');
+  url.searchParams.set('q', query);
+  const code = termCode(term);
+  if (code) url.searchParams.set('semes', code);
+
+  const ctx = await getContext();
+  const page = await ctx.newPage();
+  try {
+    await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await settleChallenge(page, 45000);
+    await page.waitForSelector('div.col-md-11 table', { timeout: 20000 }).catch(() => {});
+
+    const results = await page.evaluate((max) => {
+      const out = [];
+      for (const box of document.querySelectorAll('div.col-md-11')) {
+        const table = box.querySelector('table');
+        const link = box.querySelector('a[href*="#subj/"]');
+        if (!table || !link) continue;
+
+        // href looks like .../#subj/STAT/GR5204-20263-001/
+        const m = link.getAttribute('href').match(/#subj\/([A-Z]+)\/([A-Z]{0,3}\d+[A-Z]?)-(\d{5})-(\d+)/i);
+        const rows = Array.from(table.querySelectorAll('tr'));
+        const cells = rows.length > 1
+          ? Array.from(rows[1].querySelectorAll('td')).map((td) => td.innerText.trim())
+          : [];
+
+        const lines = box.innerText.split('\n').map((l) => l.trim()).filter(Boolean);
+        const description = lines.find((l) => l.length > 120) || '';
+
+        out.push({
+          title: link.innerText.trim(),
+          subject: m ? m[1] : null,
+          number: m ? m[2] : null,
+          section: m ? m[4] : (cells[0] || null),
+          callNumber: cells[1] || null,
+          semester: cells[2] || null,
+          instructor: cells[3] || null,
+          department: cells[4] || null,
+          methodOfInstruction: cells[5] || null,
+          description: description.slice(0, 1200),
+          url: link.href,
+        });
+        if (out.length >= max) break;
+      }
+      return out;
+    }, limit);
+
+    const countText = await page.evaluate(() => {
+      const m = document.body.innerText.match(/Showing (\d+) results/i);
+      return m ? Number(m[1]) : null;
+    });
+
+    return { query, term: term || 'all', termCode: code || null, totalResults: countText, returned: results.length, results };
+  } finally {
+    await page.close().catch(() => {});
+  }
 }

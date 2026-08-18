@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "MCP server + Telegram bridge so the Mac Mini can do Columbia work (CourseWorks, Vergil, mail) on Jeremy's behalf, with a human check-off on anything that leaves the machine.",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "mcp": "node src/mcp/server.js",
     "bridge": "node src/bridge/telegram.js",
@@ -16,6 +18,6 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "playwright": "^1.48.0"
+    "playwright": "^1.62.1"
   }
 }

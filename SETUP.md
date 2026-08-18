@@ -88,6 +88,13 @@ Slower and macOS-only, but it can't be administratively taken away.
 
 ## 4. Vergil login — once, in front of the machine
 
+**Course *catalog* search already works without this.** The Directory of
+Classes is public, so `vergil_search` is live the moment Playwright is
+installed. You only need the login below for your *personal* Vergil data —
+schedule, book lists, faculty evaluations — and for meeting days/times, which
+Columbia moved out of the DOC and into Vergil only.
+
+
 ```bash
 npm run vergil-login
 ```
@@ -97,8 +104,12 @@ script exits once you're through.
 
 This is a real browser because it has to be: every `columbia.edu` host sits
 behind a Cloudflare managed challenge that returns 403 to `curl` regardless of
-User-Agent. The persistent profile keeps both the CAS session and the
-Cloudflare clearance cookie, so later browsing runs unattended.
+User-Agent. Playwright clears it fine. The persistent profile keeps both the
+CAS session and the Cloudflare clearance cookie, so later browsing runs
+unattended.
+
+Vergil now lives at `vergil.columbia.edu/vergil` (the old
+`vergil.registrar.columbia.edu` redirects there).
 
 Re-run whenever CAS expires — `vergil_session_status` reporting `needsLogin`
 is the tell.

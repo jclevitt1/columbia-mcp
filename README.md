@@ -41,7 +41,8 @@ mail, because there is nothing to talk to.
 | Surface | Access | Notes |
 |---|---|---|
 | CourseWorks (Canvas) | REST + Bearer token | Clean. `401 WWW-Authenticate: Bearer realm="canvas-lms"` unauthenticated. No bot challenge. |
-| Vergil / Directory of Classes | Playwright, persistent profile | **Every `columbia.edu` host is behind a Cloudflare managed challenge** (`cf-mitigated: challenge`). `curl` gets a 403 "Just a moment…" even with a browser UA. HTTP scraping is not an option. |
+| Course catalog (Directory of Classes) | Playwright, **no login** | Public at `doc.sis.columbia.edu`; search GETs `doc.search.columbia.edu/search?q=…&semes=20263`. Works before any CAS login. |
+| Vergil (personal schedule) | Playwright + CAS/Duo | Moved to `vergil.columbia.edu/vergil`. Meeting days/times now live *only* here, not in the DOC. |
 | Columbia mail | pluggable | Gmail API may be blocked by CUIT for third-party OAuth clients; `apple_mail` via Mail.app is the fallback nobody can revoke. Default is `none` until verified. |
 
 ## Setup
@@ -85,6 +86,20 @@ launchd/                keep the bridge alive across reboots
 
 ## Status
 
-Scaffolding is complete and the MCP server boots and registers all 14 tools.
-Nothing has been run against a live Columbia account yet — that needs the Mini.
-`npm run doctor` is the honest scoreboard.
+Verified working end to end, on real data:
+
+- MCP server boots, registers all 14 tools.
+- `vergil_search` returns structured live results — "statistical inference",
+  Fall 2026 → 29 hits, including `STAT GR5204-001` (call# 14611,
+  Dolgoarshinnykh) and `-002` (14612, De La Peña). Playwright clears the
+  Cloudflare challenge without trouble.
+- Approvals gate: refuses to run while pending, refuses replay after done,
+  refuses to approve a rejected action. One send out of seven attempts.
+
+Not yet exercised: Canvas (needs a token), mail (needs a backend decision),
+and Vergil's logged-in half (needs Duo at the machine). `npm run doctor`
+is the scoreboard.
+
+**Note:** all of `columbia.edu` sits behind a Cloudflare managed challenge —
+`curl` gets a 403 "Just a moment…" even with a browser UA — so the browser
+path is not optional, it's the only thing that works.
