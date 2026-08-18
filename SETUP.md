@@ -59,17 +59,26 @@ Do this in order and stop at the first that works.
 Columbia mail is Google Workspace. The blocker is whether CUIT permits
 third-party OAuth clients for `gmail.readonly` / `gmail.compose`. Check:
 
-1. <https://console.cloud.google.com> → new project → enable **Gmail API**.
+1. <https://console.cloud.google.com> → new project → enable four APIs:
+   **Gmail**, **Google Docs**, **Google Sheets**, **Google Drive**.
 2. OAuth consent screen → **External** → add your Columbia address as a test user.
 3. Credentials → OAuth client ID → **Desktop app** → copy id + secret.
-4. Sign in with your `@columbia.edu` account when consenting.
+4. Put the id and secret in `.env`, then `npm run gmail-auth`.
+5. Sign in with your `@columbia.edu` account when consenting.
+
+One consent covers mail, Drive, Docs and Sheets — the scope list lives in
+`src/tools/google-auth.js`. Adding a scope later means re-running
+`gmail-auth`, so it's cheaper to decide up front.
 
 **If you hit "Access blocked: this app is blocked" or an admin-policy error,
 that's your answer — CUIT blocks it. Go to 3b.** Don't fight it; the fallback
 is genuinely fine.
 
-If it works, `npm install googleapis`, set `GMAIL_BACKEND=gmail_api` plus the
-three `GMAIL_*` vars, and mint a refresh token.
+`gmail-auth` writes `GMAIL_REFRESH_TOKEN` and flips `GMAIL_BACKEND=gmail_api`
+into `.env` itself on success.
+
+Note: `apple_mail` is a *mail* fallback only. Drive/Docs/Sheets have no
+non-Google path, so if OAuth is blocked those tools are simply unavailable.
 
 ### 3b. Fall back to Mail.app (always available)
 

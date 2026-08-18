@@ -159,22 +159,8 @@ function escapeAS(s) {
 /* ---------- Gmail API backend (lazy) ---------- */
 
 async function gmailClient() {
-  let google;
-  try {
-    ({ google } = await import('googleapis'));
-  } catch {
-    throw new MailError('GMAIL_BACKEND=gmail_api requires `npm install googleapis`.');
-  }
-  const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
-  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
-    throw new MailError(
-      'Gmail OAuth is not set up. Run `npm run gmail-auth` on the Mini to mint '
-      + 'a refresh token, or switch to GMAIL_BACKEND=apple_mail.'
-    );
-  }
-  const auth = new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, 'http://localhost:8788/oauth2callback');
-  auth.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
-  return google.gmail({ version: 'v1', auth });
+  const { gmail } = await import('./google-auth.js');
+  return gmail();
 }
 
 async function apiSearch({ query, limit }) {

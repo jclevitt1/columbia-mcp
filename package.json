@@ -11,10 +11,12 @@
     "mcp": "node src/mcp/server.js",
     "bridge": "node src/bridge/telegram.js",
     "vergil-login": "node scripts/vergil-login.js",
-    "doctor": "node scripts/doctor.js"
+    "doctor": "node scripts/doctor.js",
+    "gmail-auth": "node scripts/gmail-auth.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "googleapis": "^175.0.0",
     "zod": "^4.4.3"
   },
   "optionalDependencies": {

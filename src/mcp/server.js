@@ -10,6 +10,7 @@ import * as approvals from '../approvals.js';
 import * as canvas from '../tools/canvas.js';
 import * as vergil from '../tools/vergil.js';
 import * as mail from '../tools/gmail.js';
+import * as gdocs from '../tools/gdocs.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 loadEnv(ROOT);
@@ -17,7 +18,11 @@ ensureHome();
 
 /* Anything that leaves the machine runs here, and only after the bridge has
  * flipped the action to 'approved' in response to Jeremy's reply. */
-approvals.registerExecutor('gmail.send', (payload) => mail.sendDraft(payload));
+approvals.registerExecutor('gmail.send', (p) => mail.sendDraft(p));
+approvals.registerExecutor('docs.append', (p) => gdocs.applyDocAppend(p));
+approvals.registerExecutor('docs.create', (p) => gdocs.applyCreateDoc(p));
+approvals.registerExecutor('sheets.append', (p) => gdocs.applySheetAppend(p));
+approvals.registerExecutor('sheets.update', (p) => gdocs.applySheetUpdate(p));
 
 const server = new McpServer(
   { name: 'columbia-mcp', version: '0.1.0' },
@@ -38,6 +43,20 @@ function tool(name, config, handler) {
       };
     }
   });
+}
+
+/**
+ * Every write-class tool funnels through here: enqueue, report back, execute
+ * nothing. The uniform return shape means the model always learns the same
+ * thing — that it has asked, not acted.
+ */
+function queue({ kind, summary, detail, payload }) {
+  const action = approvals.enqueue({ kind, summary, detail, payload });
+  return {
+    queued: true,
+    approvalId: action.id,
+    message: `Pending approval ${action.id}. Jeremy must confirm over Telegram; nothing has happened yet.`,
+  };
 }
 
 /* ---------------- CourseWorks (Canvas) — read only ---------------- */
@@ -156,19 +175,98 @@ tool('mail_request_send', {
     subject: z.string(),
     preview: z.string().optional().describe('First few lines of the body, so Jeremy can approve from his phone'),
   },
-}, ({ draftId, to, subject, preview }) => {
-  const action = approvals.enqueue({
-    kind: 'gmail.send',
-    summary: `Send mail to ${to} — "${subject}"`,
-    detail: preview || '',
-    payload: { draftId },
-  });
-  return {
-    queued: true,
-    approvalId: action.id,
-    message: `Pending approval ${action.id}. Jeremy must confirm over Telegram; nothing has been sent.`,
-  };
-});
+}, ({ draftId, to, subject, preview }) => queue({
+  kind: 'gmail.send',
+  summary: `Send mail to ${to} — "${subject}"`,
+  detail: preview || '',
+  payload: { draftId },
+}));
+
+
+/* ---------------- Drive / Docs / Sheets ---------------- */
+
+tool('drive_search', {
+  title: 'Find files in Drive',
+  description: 'Search Drive by name or full text. Filter to docs or sheets to avoid drowning in PDFs. Returns ids for docs_read / sheets_read.',
+  inputSchema: {
+    query: z.string().describe('Name or content to search for'),
+    type: z.enum(['doc', 'sheet', 'folder']).optional().describe('Narrow by file type'),
+    limit: z.number().optional(),
+  },
+}, ({ query, type, limit }) => gdocs.searchFiles({ query, type, limit }));
+
+tool('docs_read', {
+  title: 'Read a Google Doc',
+  description: 'Full text of a Google Doc, with tables flattened to tab-separated lines.',
+  inputSchema: { documentId: z.string().describe('Doc id from drive_search or the /d/<id>/ in its URL') },
+}, ({ documentId }) => gdocs.readDoc({ documentId }));
+
+tool('sheets_read', {
+  title: 'Read a Google Sheet',
+  description: 'Without a range, lists the tabs and their sizes. With a range like "Sheet1!A1:F50", returns the values.',
+  inputSchema: {
+    spreadsheetId: z.string(),
+    range: z.string().optional().describe('A1 notation, e.g. "Sheet1!A1:F50"'),
+  },
+}, ({ spreadsheetId, range }) => gdocs.readSheet({ spreadsheetId, range }));
+
+/* Writes below only ever queue. Same gate as mail — see approvals.js. */
+
+tool('docs_request_append', {
+  title: 'Ask Jeremy to approve appending to a Doc',
+  description: 'Queues an append for approval. This tool CANNOT edit the document — it only creates a pending request Jeremy confirms over Telegram.',
+  inputSchema: {
+    documentId: z.string(),
+    text: z.string().describe('Text to append at the end of the document'),
+    title: z.string().optional().describe('Doc title, for the approval message'),
+  },
+}, ({ documentId, text, title }) => queue({
+  kind: 'docs.append',
+  summary: `Append ${text.length} chars to doc ${title || documentId}`,
+  detail: text.slice(0, 500),
+  payload: { documentId, text },
+}));
+
+tool('docs_request_create', {
+  title: 'Ask Jeremy to approve creating a Doc',
+  description: 'Queues creation of a new Google Doc for approval. Nothing is created until he confirms.',
+  inputSchema: { title: z.string(), text: z.string().optional() },
+}, ({ title, text }) => queue({
+  kind: 'docs.create',
+  summary: `Create doc "${title}"`,
+  detail: (text || '').slice(0, 500),
+  payload: { title, text },
+}));
+
+tool('sheets_request_append', {
+  title: 'Ask Jeremy to approve appending rows',
+  description: 'Queues an append of rows to a sheet. Nothing is written until he confirms.',
+  inputSchema: {
+    spreadsheetId: z.string(),
+    range: z.string().describe('Target range, e.g. "Sheet1!A:D"'),
+    values: z.array(z.array(z.union([z.string(), z.number()]))).describe('Rows to append'),
+  },
+}, ({ spreadsheetId, range, values }) => queue({
+  kind: 'sheets.append',
+  summary: `Append ${values.length} row(s) to ${range} in sheet ${spreadsheetId}`,
+  detail: values.slice(0, 5).map((r) => r.join(' | ')).join('\n'),
+  payload: { spreadsheetId, range, values },
+}));
+
+tool('sheets_request_update', {
+  title: 'Ask Jeremy to approve overwriting a range',
+  description: 'Queues an overwrite of a sheet range. Destructive, so it always waits for confirmation.',
+  inputSchema: {
+    spreadsheetId: z.string(),
+    range: z.string(),
+    values: z.array(z.array(z.union([z.string(), z.number()]))),
+  },
+}, ({ spreadsheetId, range, values }) => queue({
+  kind: 'sheets.update',
+  summary: `OVERWRITE ${range} in sheet ${spreadsheetId} with ${values.length} row(s)`,
+  detail: values.slice(0, 5).map((r) => r.join(' | ')).join('\n'),
+  payload: { spreadsheetId, range, values },
+}));
 
 /* ---------------- Approvals (read-only from the model's side) ---------------- */
 

@@ -36,6 +36,11 @@ but has no tool that approves — only the bridge sets `approved`, and only in
 response to my reply. A prompt-injected model can't talk its way into sending
 mail, because there is nothing to talk to.
 
+This matters more than it sounds, because OAuth can't help here: Google has no
+draft-only or append-only scope. `gmail.compose` grants sending, `documents`
+grants editing. The gate is the only control, so it's built to not depend on
+the model behaving.
+
 ## What works, and what it cost to find out
 
 | Surface | Access | Notes |
@@ -43,7 +48,8 @@ mail, because there is nothing to talk to.
 | CourseWorks (Canvas) | REST + Bearer token | Clean. `401 WWW-Authenticate: Bearer realm="canvas-lms"` unauthenticated. No bot challenge. |
 | Course catalog (Directory of Classes) | Playwright, **no login** | Public at `doc.sis.columbia.edu`; search GETs `doc.search.columbia.edu/search?q=…&semes=20263`. Works before any CAS login. |
 | Vergil (personal schedule) | Playwright + CAS/Duo | Moved to `vergil.columbia.edu/vergil`. Meeting days/times now live *only* here, not in the DOC. |
-| Columbia mail | pluggable | Gmail API may be blocked by CUIT for third-party OAuth clients; `apple_mail` via Mail.app is the fallback nobody can revoke. Default is `none` until verified. |
+| Columbia mail | pluggable | LionMail is Google Workspace (`lionmail.columbia.edu` CNAMEs to `ghs.google.com`), so Gmail API is the right target. CUIT may still block third-party OAuth clients; `apple_mail` via Mail.app is the fallback nobody can revoke. |
+| Drive / Docs / Sheets | same Google OAuth | One consent covers mail and files. Reads direct; edits gated. |
 
 ## Setup
 
@@ -88,13 +94,14 @@ launchd/                keep the bridge alive across reboots
 
 Verified working end to end, on real data:
 
-- MCP server boots, registers all 14 tools.
+- MCP server boots, registers all 21 tools.
 - `vergil_search` returns structured live results — "statistical inference",
   Fall 2026 → 29 hits, including `STAT GR5204-001` (call# 14611,
   Dolgoarshinnykh) and `-002` (14612, De La Peña). Playwright clears the
   Cloudflare challenge without trouble.
 - Approvals gate: refuses to run while pending, refuses replay after done,
   refuses to approve a rejected action. One send out of seven attempts.
+  Every write tool (`*_request_*`) confirmed to queue and do nothing else.
 
 Not yet exercised: Canvas (needs a token), mail (needs a backend decision),
 and Vergil's logged-in half (needs Duo at the machine). `npm run doctor`
