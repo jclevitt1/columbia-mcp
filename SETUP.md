@@ -1,5 +1,29 @@
 # Setup — run this at the Mac Mini
 
+## Moving an already-working install to another machine
+
+```bash
+git clone https://github.com/jclevitt1/columbia-mcp.git
+cd columbia-mcp
+scp <old-machine>:~/workspace/Columbia/columbia-mcp/.env .   # secrets do NOT come from git
+./scripts/install-mini.sh --load
+```
+
+`.env` is gitignored, so the clone brings no credentials — copying it across
+is the one manual step, and the script stops with instructions if it's absent.
+The Canvas token and the Google refresh token are both portable; the Playwright
+profile is not, so `npm run vergil-login` still has to be re-run here.
+
+**Stop the bridge on the old machine first.** Telegram delivers each update to
+exactly one poller, so two bridges sharing a token steal each other's messages
+at random — which reads as flaky delivery, not a misconfiguration.
+
+Skip to step 5 once the script finishes. The rest of this document is for a
+first-time setup.
+
+---
+
+
 Ordered so the cheap, certain steps come first and the one genuinely unknown
 step (mail) comes last. `npm run doctor` after each step tells you where you
 are.
