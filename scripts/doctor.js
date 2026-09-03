@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CONFIG, PATHS, loadEnv } from '../src/config.js';
 import * as vergil from '../src/tools/vergil.js';
+import { missingScopes } from '../src/tools/google-auth.js';
+import { describeHead } from '../src/updater.js';
 
 const exec = promisify(execFile);
 loadEnv(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
@@ -43,6 +45,18 @@ add('Mail backend', CONFIG.gmailBackend !== 'none',
     ? 'unset — see SETUP.md step 3 (apple_mail needs no admin approval)'
     : CONFIG.gmailBackend);
 
+// 3b. Google token scopes — the token predates Calendar unless re-minted.
+if (CONFIG.gmailBackend === 'gmail_api') {
+  try {
+    const missing = await missingScopes();
+    add('Google scopes', missing.length === 0, missing.length
+      ? `missing ${missing.map((s) => s.split('/').pop()).join(', ')} — re-run \`npm run gmail-auth\` at the Mini`
+      : 'refresh token covers mail, Drive, Docs, Sheets, Calendar');
+  } catch (e) {
+    add('Google scopes', false, String(e.message));
+  }
+}
+
 // 4. Telegram.
 if (!CONFIG.telegramToken) {
   add('Telegram bot', false, 'TELEGRAM_BOT_TOKEN unset — talk to @BotFather');
@@ -61,6 +75,10 @@ add('Telegram owner lock', Boolean(CONFIG.telegramOwnerId),
 // 5. Browser profile for the Cloudflare-challenged columbia.edu hosts.
 add('Vergil browser profile', vergil.profileExists(),
   vergil.profileExists() ? PATHS.browserProfile : 'missing — run `npm run vergil-login` at the Mini');
+
+// 6. Which code is actually running, so a remote \update can be verified here too.
+const head = await describeHead(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
+add('Git checkout', Boolean(head), head ? `${head.branch} @ ${head.sha} — ${head.subject}` : 'not a git checkout; \\update will not work');
 
 const pad = Math.max(...checks.map((c) => c.name.length));
 for (const c of checks) {

@@ -83,16 +83,29 @@ Do this in order and stop at the first that works.
 Columbia mail is Google Workspace. The blocker is whether CUIT permits
 third-party OAuth clients for `gmail.readonly` / `gmail.compose`. Check:
 
-1. <https://console.cloud.google.com> → new project → enable four APIs:
-   **Gmail**, **Google Docs**, **Google Sheets**, **Google Drive**.
+1. <https://console.cloud.google.com> → new project → enable five APIs:
+   **Gmail**, **Google Docs**, **Google Sheets**, **Google Drive**, **Google Calendar**.
 2. OAuth consent screen → **External** → add your Columbia address as a test user.
 3. Credentials → OAuth client ID → **Desktop app** → copy id + secret.
 4. Put the id and secret in `.env`, then `npm run gmail-auth`.
 5. Sign in with your `@columbia.edu` account when consenting.
 
-One consent covers mail, Drive, Docs and Sheets — the scope list lives in
-`src/tools/google-auth.js`. Adding a scope later means re-running
+One consent covers mail, Drive, Docs, Sheets and Calendar — the scope list
+lives in `src/tools/google-auth.js`. Adding a scope later means re-running
 `gmail-auth`, so it's cheaper to decide up front.
+
+### 3a-bis. Already authorised before Calendar was added?
+
+The stored refresh token predates the Calendar scope. `npm run doctor` shows
+`FAIL Google scopes  missing calendar.readonly, calendar.events`. Fix, at the
+Mini (the consent screen needs a browser there):
+
+1. Enable the **Google Calendar API** on the same Cloud project:
+   <https://console.cloud.google.com/apis/library/calendar-json.googleapis.com>
+2. `npm run gmail-auth` — same consent flow, now with Calendar in the list.
+3. `npm run doctor` → `ok  Google scopes`.
+4. Restart the bridge (text `\update`, or `launchctl kickstart -k gui/$(id -u)/dev.jclevitt.columbia-bridge`)
+   so the running process reads the new token from `.env`.
 
 **If you hit "Access blocked: this app is blocked" or an admin-policy error,
 that's your answer — CUIT blocks it. Go to 3b.** Don't fight it; the fallback
@@ -170,6 +183,18 @@ A LaunchAgent, not a LaunchDaemon — it needs your GUI session for Playwright
 windows and Mail automation. So the Mini has to be logged in, not just powered
 on. Check **Settings → Users & Groups → automatic login** and
 **Energy Saver → prevent sleep**.
+
+The plist sets `BRIDGE_SUPERVISOR=launchd`, which is what lets `\update`
+simply exit after pulling and trust `KeepAlive` to restart it. If you already
+had an older plist installed, re-run `./scripts/install-mini.sh --load` to
+regenerate it with that variable; otherwise `\update` will re-exec itself
+*and* launchd will start another copy, and two pollers on one bot token
+split messages at random.
+
+### Updating remotely
+
+Push to `main` from anywhere, then text the bot `\update`. Text `\status`
+afterwards to confirm the sha. See the README for what it refuses to do.
 
 ---
 

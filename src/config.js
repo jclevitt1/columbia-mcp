@@ -23,6 +23,14 @@ export function ensureHome() {
   fs.mkdirSync(PATHS.logs, { recursive: true, mode: 0o700 });
 }
 
+/**
+ * Keys loadEnv() set from the file, as opposed to ones already in the
+ * environment. The updater strips these before re-exec'ing so the new process
+ * re-reads .env instead of inheriting stale values (a re-minted refresh token
+ * is the case that matters).
+ */
+export const ENV_FROM_FILE = new Set();
+
 /** Load .env from the repo root without adding a dependency. */
 export function loadEnv(root = process.cwd()) {
   const file = path.join(root, '.env');
@@ -37,7 +45,7 @@ export function loadEnv(root = process.cwd()) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
-    if (!(key in process.env)) process.env[key] = val;
+    if (!(key in process.env)) { process.env[key] = val; ENV_FROM_FILE.add(key); }
   }
 }
 

@@ -29,6 +29,10 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/jeremylevitt/.local/bin</string>
+    <!-- Tells \update to exit and let KeepAlive restart, instead of re-exec'ing
+         itself (which would leave two pollers on one Telegram token). -->
+    <key>BRIDGE_SUPERVISOR</key>
+    <string>launchd</string>
   </dict>
 
   <key>RunAtLoad</key>

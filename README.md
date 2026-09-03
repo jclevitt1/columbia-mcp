@@ -50,6 +50,7 @@ the model behaving.
 | Vergil (personal schedule) | Playwright + CAS/Duo | Moved to `vergil.columbia.edu/vergil`. Meeting days/times now live *only* here, not in the DOC. |
 | Columbia mail | pluggable | LionMail is Google Workspace (`lionmail.columbia.edu` CNAMEs to `ghs.google.com`), so Gmail API is the right target. CUIT may still block third-party OAuth clients; `apple_mail` via Mail.app is the fallback nobody can revoke. |
 | Drive / Docs / Sheets | same Google OAuth | One consent covers mail and files. Reads direct; edits gated. |
+| Google Calendar | same Google OAuth | Reads direct; creating/deleting events gated. Added after the first consent, so `gmail-auth` must be re-run once to pick up the scope. |
 
 ## Setup
 
@@ -68,12 +69,29 @@ npm run bridge
 
 ```
 \clear     forget context, start fresh next message
-\status    session info + config health
+\status    session info + config health + running git version
 \pending   actions waiting on me
+\update    git pull + restart the bridge (remote deploy from the phone)
 \help
 yes <id>   approve a queued action   (bare "yes" works if only one is pending)
 no <id>    drop it
 ```
+
+### Updating the Mini from anywhere
+
+Push to `main`, then text `\update`. The bridge fetches, fast-forwards, runs
+`npm install` if `package.json` or the lockfile moved, and restarts. Under
+launchd it exits and `KeepAlive` brings it back; run by hand it re-execs
+itself. The new process texts back "Back up on <sha>" so you know it landed.
+
+It only ever fast-forwards. Local edits or a diverged branch on the Mini make
+it stop and say so rather than merge from a phone. A failed `npm install`
+rolls the checkout back to where it was.
+
+This is a command, not a webhook or a poll, on purpose: a webhook needs the
+Mini reachable on public HTTPS, which this whole design avoids, and a poll
+would restart the bridge on its own schedule instead of yours. Messages are
+handled one at a time, so `\update` can never land mid-conversation.
 
 ## Layout
 
@@ -84,7 +102,11 @@ src/sessions.js         telegram chat -> claude session id
 src/tools/canvas.js     CourseWorks REST, paginated, read-only
 src/tools/vergil.js     Playwright against the Cloudflare-challenged hosts
 src/tools/gmail.js      apple_mail | gmail_api | none
-src/mcp/server.js       14 tools over stdio
+src/tools/gdocs.js      Drive search, Docs/Sheets read, gated writes
+src/tools/gcal.js       Calendar read, gated create/delete
+src/executors.js        the "apply" half of every gated write, shared by both processes
+src/updater.js          \update: fetch, ff-only, npm install, restart
+src/mcp/server.js       29 tools over stdio
 src/bridge/telegram.js  long-poll loop, spawns claude -p
 scripts/doctor.js       preflight — run this first
 launchd/                keep the bridge alive across reboots

@@ -20,6 +20,9 @@ export const SCOPES = [
   // Read + write Docs and Sheets
   'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/spreadsheets',
+  // Calendar: list calendars, read + write events (writes are gated)
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
 ];
 
 export const REDIRECT_PORT = 8788;
@@ -55,3 +58,18 @@ export const drive = () => google.drive({ version: 'v3', auth: authedClient() })
 export const docs = () => google.docs({ version: 'v1', auth: authedClient() });
 export const sheets = () => google.sheets({ version: 'v4', auth: authedClient() });
 export const gmail = () => google.gmail({ version: 'v1', auth: authedClient() });
+export const calendar = () => google.calendar({ version: 'v3', auth: authedClient() });
+
+/**
+ * Which of SCOPES the stored refresh token actually carries. Scopes get added
+ * over time (Calendar came after the first consent) and an old token just
+ * lacks the new ones — the API then fails per call with a vague 403. The
+ * doctor uses this to say "re-run gmail-auth" up front instead.
+ */
+export async function missingScopes() {
+  const client = authedClient();
+  const { token } = await client.getAccessToken();
+  const info = await client.getTokenInfo(token);
+  const granted = new Set(info.scopes || []);
+  return SCOPES.filter((s) => !granted.has(s));
+}

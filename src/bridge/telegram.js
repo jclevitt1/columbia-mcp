@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { CONFIG, ensureHome, loadEnv } from '../config.js';
 import * as approvals from '../approvals.js';
 import * as sessions from '../sessions.js';
-import * as mail from '../tools/gmail.js';
+import * as updater from '../updater.js';
+import { registerAll as registerExecutors } from '../executors.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 loadEnv(ROOT);
@@ -33,8 +34,8 @@ const DENY_WORDS = ['no', 'n', 'cancel', 'reject', 'stop'];
 const TELEGRAM_LIMIT = 4000; // real cap is 4096; leave room for our framing
 const RUN_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS || 15 * 60 * 1000);
 
-/* The bridge is the only process allowed to approve, so it needs the executor. */
-approvals.registerExecutor('gmail.send', (payload) => mail.sendDraft(payload));
+/* The bridge is the only process allowed to approve, so it needs every executor. */
+registerExecutors();
 
 /* ---------------- Telegram plumbing ---------------- */
 
@@ -87,11 +88,13 @@ Keep replies short and plain-text — no markdown tables, no code fences unless
 asked. He is reading this on a phone.
 
 Tools: canvas_* for CourseWorks, vergil_* for the course catalog and any
-columbia.edu page, mail_* for Columbia mail.
+columbia.edu page, mail_* for Columbia mail, calendar_* for his Google
+Calendar, drive_*/docs_*/sheets_* for his Drive.
 
-You may read freely. You may NOT send anything on his behalf: write mail_draft
-to save a draft, then mail_request_send to queue it for his approval, then tell
-him it is waiting. He approves from Telegram; you cannot approve for him.
+You may read freely. You may NOT send, create or delete anything on his
+behalf: every *_request_* tool only queues the action for his approval. Call
+it, then tell him it is waiting. He approves from Telegram; you cannot approve
+for him.
 
 If a tool reports it is unconfigured, say so plainly and name the setup step.
 Do not guess at data you could not fetch.
@@ -247,8 +250,9 @@ async function runClaude(chatId, prompt) {
 const HELP = `Columbia bot — commands
 
 \\clear     forget this conversation, start fresh next message
-\\status    session info + config health
+\\status    session info + config health + running version
 \\pending   list actions waiting on you
+\\update    pull the latest from GitHub and restart the bridge
 \\help      this
 
 Approving: reply  yes <id>  or  no <id>
@@ -270,12 +274,20 @@ async function handleCommand(chatId, text) {
   if (cmd === '\\status') {
     const s = sessions.getSession(chatId);
     const pending = approvals.list('pending');
+    const head = await updater.describeHead(ROOT);
     await send(chatId, [
       s ? `Session: ${s.sessionId.slice(0, 8)}… (${s.turns} turns)` : 'Session: none — next message starts fresh',
       `Mail backend: ${CONFIG.gmailBackend}`,
       `Canvas token: ${CONFIG.canvasToken ? 'set' : 'MISSING'}`,
       `Pending approvals: ${pending.length}`,
+      head ? `Version: ${head.branch} @ ${head.sha} — ${head.subject}` : 'Version: not a git checkout',
+      `Supervisor: ${process.env.BRIDGE_SUPERVISOR || 'none (manual run)'}`,
     ].join('\n'));
+    return true;
+  }
+
+  if (cmd === '\\update') {
+    await handleUpdate(chatId);
     return true;
   }
 
@@ -288,6 +300,49 @@ async function handleCommand(chatId, text) {
   }
 
   return false;
+}
+
+/**
+ * `\update`: fetch, fast-forward, reinstall deps if needed, restart.
+ *
+ * Safe to run at any time because the poll loop awaits each message in turn,
+ * so this can never interrupt a Claude session in flight. The last thing it
+ * does before exiting is confirm the current Telegram offset, so the restarted
+ * bridge does not receive `\update` a second time.
+ */
+async function handleUpdate(chatId) {
+  await typing(chatId);
+  let check;
+  try {
+    check = await updater.checkForUpdate(ROOT);
+  } catch (err) {
+    await send(chatId, `Update check failed: ${err.message.slice(0, 600)}`);
+    return;
+  }
+  if (check.blocked) { await send(chatId, `Not updating.\n${check.blocked}`); return; }
+
+  const head = await updater.describeHead(ROOT);
+  if (check.upToDate) {
+    await send(chatId, `Already up to date: ${head.branch} @ ${head.sha} — ${head.subject}`);
+    return;
+  }
+
+  await send(chatId, `Pulling ${check.commits.length} commit(s)${check.depsChanged ? ' (deps changed — npm install too)' : ''}:\n`
+    + check.commits.slice(0, 10).join('\n')
+    + (check.commits.length > 10 ? `\n…and ${check.commits.length - 10} more` : ''));
+
+  let after;
+  try {
+    after = await updater.applyUpdate(ROOT, check);
+  } catch (err) {
+    await send(chatId, `Update failed: ${err.message.slice(0, 800)}`);
+    return;
+  }
+
+  updater.noteRestart({ chatId, from: head?.sha, to: after?.sha });
+  await send(chatId, `Now at ${after.sha}. Restarting…`);
+  await confirmOffset();
+  updater.restart();
 }
 
 /** Returns true if the message was an approval decision. */
@@ -365,26 +420,41 @@ async function handleMessage(msg) {
   }
 }
 
+/**
+ * Telegram treats an update as delivered once a later getUpdates call passes
+ * an offset beyond it. Module-level so `\update` can flush before exiting.
+ */
+let pollOffset = 0;
+const confirmOffset = () => tg('getUpdates', { timeout: 0, offset: pollOffset }).catch(() => {});
+
 async function main() {
   if (!CONFIG.telegramToken) throw new Error('TELEGRAM_BOT_TOKEN is not set (see .env.example).');
   if (!CONFIG.telegramOwnerId) throw new Error('TELEGRAM_OWNER_CHAT_ID is not set — refusing to run an open bot.');
 
   const me = await tg('getMe', {});
   const tools = await discoverTools();
-  console.log(`columbia bridge up as @${me.username}; owner chat ${CONFIG.telegramOwnerId}`);
+  const head = await updater.describeHead(ROOT);
+  console.log(`columbia bridge up as @${me.username}; owner chat ${CONFIG.telegramOwnerId}`
+    + (head ? `; ${head.branch} @ ${head.sha}` : ''));
   console.log(`${tools.length} tools allowed: ${tools.join(', ')}`);
 
   // Skip whatever piled up while we were down — replaying old texts as fresh
   // commands is worse than dropping them.
-  let offset = 0;
   const backlog = await tg('getUpdates', { timeout: 0, offset: -1 });
-  if (backlog.length) offset = backlog[backlog.length - 1].update_id + 1;
+  if (backlog.length) pollOffset = backlog[backlog.length - 1].update_id + 1;
+
+  // If we are the process a `\update` restarted into, close the loop.
+  const restarted = updater.takeRestartMarker();
+  if (restarted?.chatId) {
+    await send(restarted.chatId, `Back up on ${head?.sha ?? '?'}${head?.subject ? ` — ${head.subject}` : ''}. `
+      + `${tools.length} tools loaded.`).catch(() => {});
+  }
 
   for (;;) {
     try {
-      const updates = await tg('getUpdates', { timeout: 50, offset, allowed_updates: ['message'] });
+      const updates = await tg('getUpdates', { timeout: 50, offset: pollOffset, allowed_updates: ['message'] });
       for (const u of updates) {
-        offset = u.update_id + 1;
+        pollOffset = u.update_id + 1;
         if (u.message) await handleMessage(u.message);
       }
     } catch (err) {

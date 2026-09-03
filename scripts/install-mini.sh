@@ -75,6 +75,7 @@ cat > "$PLIST" <<PLISTEOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$(dirname "$NODE_BIN"):$(dirname "$CLAUDE_BIN"):/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>BRIDGE_SUPERVISOR</key><string>launchd</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

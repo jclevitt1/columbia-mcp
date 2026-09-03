@@ -13,8 +13,11 @@ loadEnv(ROOT);
 
 /**
  * Mints the Google refresh token used by every Google surface: mail, Drive,
- * Docs and Sheets. One consent covers all of them — see SCOPES in
+ * Docs, Sheets and Calendar. One consent covers all of them — see SCOPES in
  * src/tools/google-auth.js, which is the single source of truth.
+ *
+ * Re-run this whenever SCOPES grows; the old token keeps working for the old
+ * scopes but silently lacks the new one. `npm run doctor` reports the gap.
  */
 const PORT = REDIRECT_PORT;
 const REDIRECT = REDIRECT_URI;
@@ -24,7 +27,7 @@ if (!id || !secret) {
   console.error(
     'Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in .env first.\n\n'
     + '  1. https://console.cloud.google.com -> new project\n'
-    + '  2. Enable: Gmail API, Google Docs API, Google Sheets API, Google Drive API\n'
+    + '  2. Enable: Gmail API, Google Docs API, Google Sheets API, Google Drive API, Google Calendar API\n'
     + '  3. OAuth consent screen -> External -> add your @columbia.edu as a test user\n'
     + '  4. Credentials -> Create OAuth client ID -> **Desktop app**\n'
     + `     (Desktop clients accept any http://localhost redirect, so there is\n`

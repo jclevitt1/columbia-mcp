@@ -11,18 +11,17 @@ import * as canvas from '../tools/canvas.js';
 import * as vergil from '../tools/vergil.js';
 import * as mail from '../tools/gmail.js';
 import * as gdocs from '../tools/gdocs.js';
+import * as gcal from '../tools/gcal.js';
+import { registerAll as registerExecutors } from '../executors.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 loadEnv(ROOT);
 ensureHome();
 
-/* Anything that leaves the machine runs here, and only after the bridge has
- * flipped the action to 'approved' in response to Jeremy's reply. */
-approvals.registerExecutor('gmail.send', (p) => mail.sendDraft(p));
-approvals.registerExecutor('docs.append', (p) => gdocs.applyDocAppend(p));
-approvals.registerExecutor('docs.create', (p) => gdocs.applyCreateDoc(p));
-approvals.registerExecutor('sheets.append', (p) => gdocs.applySheetAppend(p));
-approvals.registerExecutor('sheets.update', (p) => gdocs.applySheetUpdate(p));
+/* Anything that leaves the machine runs only after the bridge has flipped the
+ * action to 'approved' in response to Jeremy's reply. The executors live in
+ * one module shared with the bridge — see src/executors.js for why. */
+registerExecutors();
 
 const server = new McpServer(
   { name: 'columbia-mcp', version: '0.1.0' },
@@ -292,6 +291,72 @@ tool('sheets_request_update', {
   summary: `OVERWRITE ${range} in sheet ${spreadsheetId} with ${values.length} row(s)`,
   detail: values.slice(0, 5).map((r) => r.join(' | ')).join('\n'),
   payload: { spreadsheetId, range, values },
+}));
+
+/* ---------------- Calendar ---------------- */
+
+tool('calendar_list', {
+  title: 'List calendars',
+  description: 'The calendars on Jeremy\'s Google account, with ids for calendar_events. "primary" always works as an id without calling this.',
+  inputSchema: {},
+}, () => gcal.listCalendars());
+
+tool('calendar_events', {
+  title: 'Events in a date range',
+  description: 'Events on a calendar, defaulting to the next 7 days on the primary calendar. Recurring events are expanded. Times are in CALENDAR_TIMEZONE (America/New_York unless overridden).',
+  inputSchema: {
+    calendarId: z.string().optional().describe('Calendar id from calendar_list (default "primary")'),
+    days: z.number().optional().describe('Window length from timeMin/now (default 7)'),
+    timeMin: z.string().optional().describe('ISO 8601 start, e.g. "2026-09-08T00:00:00-04:00" (default now)'),
+    timeMax: z.string().optional().describe('ISO 8601 end (default timeMin + days)'),
+    query: z.string().optional().describe('Free-text filter on title/description/location'),
+    limit: z.number().optional(),
+  },
+}, (args) => gcal.listEvents(args));
+
+tool('calendar_event', {
+  title: 'Read one event',
+  description: 'Full detail for a single event, including attendees.',
+  inputSchema: {
+    eventId: z.string(),
+    calendarId: z.string().optional(),
+  },
+}, ({ eventId, calendarId }) => gcal.getEvent({ eventId, calendarId }));
+
+/* Writes below only ever queue. Same gate as mail — see approvals.js. */
+
+tool('calendar_request_create', {
+  title: 'Ask Jeremy to approve adding an event',
+  description: 'Queues a new calendar event for approval. This tool CANNOT create the event — Jeremy confirms over Telegram first. Give start/end as ISO 8601 with offset, or set allDay with YYYY-MM-DD dates.',
+  inputSchema: {
+    summary: z.string().describe('Event title'),
+    start: z.string().describe('ISO 8601 datetime, or YYYY-MM-DD when allDay'),
+    end: z.string().optional().describe('ISO 8601 datetime; for allDay the exclusive end date (defaults to start)'),
+    allDay: z.boolean().optional(),
+    location: z.string().optional(),
+    description: z.string().optional(),
+    calendarId: z.string().optional().describe('Default "primary"'),
+  },
+}, ({ summary, start, end, allDay, location, description, calendarId }) => queue({
+  kind: 'calendar.create',
+  summary: `Add "${summary}" ${allDay ? `on ${start}` : `at ${start}`}${location ? ` @ ${location}` : ''}`,
+  detail: [end && !allDay ? `until ${end}` : '', description || ''].filter(Boolean).join('\n').slice(0, 500),
+  payload: { summary, start, end: end || (allDay ? start : undefined), allDay: Boolean(allDay), location, description, calendarId: calendarId || 'primary' },
+}));
+
+tool('calendar_request_delete', {
+  title: 'Ask Jeremy to approve deleting an event',
+  description: 'Queues deletion of an event for approval. Nothing is removed until he confirms. Pass the event title so the approval message is readable on a phone.',
+  inputSchema: {
+    eventId: z.string(),
+    summary: z.string().describe('Event title, from calendar_events'),
+    calendarId: z.string().optional(),
+  },
+}, ({ eventId, summary, calendarId }) => queue({
+  kind: 'calendar.delete',
+  summary: `DELETE event "${summary}"`,
+  detail: eventId,
+  payload: { eventId, calendarId: calendarId || 'primary' },
 }));
 
 /* ---------------- Approvals (read-only from the model's side) ---------------- */
