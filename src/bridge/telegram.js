@@ -255,8 +255,9 @@ const HELP = `Columbia bot — commands
 \\update    pull the latest from GitHub and restart the bridge
 \\help      this
 
-Approving: reply  yes <id>  or  no <id>
-(just "yes" works when only one is pending)
+Approving: reply  yes  or  no
+"yes" runs everything pending; "no" drops everything pending.
+Add an id (yes 3f9a1c) to pick one out of several.
 
 Anything else is sent to Claude with your Columbia tools attached.`;
 
@@ -345,7 +346,15 @@ async function handleUpdate(chatId) {
   updater.restart();
 }
 
-/** Returns true if the message was an approval decision. */
+/**
+ * Returns true if the message was an approval decision.
+ *
+ * A bare "yes" or "no" answers *everything* pending — the actions were
+ * announced together, so the reply reads as an answer to the batch. An id
+ * narrows it to one. This replaced a rule that demanded an id whenever more
+ * than one action was pending, which meant a plain "no" did nothing and the
+ * same actions kept re-appearing after every turn.
+ */
 async function handleApproval(chatId, text) {
   const words = text.trim().toLowerCase().split(/\s+/);
   const verb = words[0];
@@ -356,38 +365,49 @@ async function handleApproval(chatId, text) {
   const pending = approvals.list('pending');
   if (!pending.length) return false;
 
-  let id = words.find((w) => /^[0-9a-f]{6}$/.test(w));
-  if (!id) {
-    if (pending.length > 1) {
-      await send(chatId, `${pending.length} actions pending — say "yes <id>":\n`
-        + pending.map((a) => `${a.id}  ${a.summary}`).join('\n'));
-      return true;
-    }
-    id = pending[0].id;
-  }
-
-  if (isNo) {
-    approvals.reject(id);
-    await send(chatId, `Cancelled ${id}.`);
+  const id = words.find((w) => /^[0-9a-f]{6}$/.test(w));
+  const targets = id ? pending.filter((a) => a.id === id) : pending;
+  if (!targets.length) {
+    await send(chatId, `No pending action ${id}. Pending now:\n`
+      + pending.map((a) => `${a.id}  ${a.summary}`).join('\n'));
     return true;
   }
 
-  const approved = approvals.approve(id);
-  if (!approved.ok) { await send(chatId, `Could not approve: ${approved.error}`); return true; }
+  if (isNo) {
+    for (const a of targets) approvals.reject(a.id);
+    await send(chatId, targets.length === 1
+      ? `Dropped — ${targets[0].summary}`
+      : `Dropped ${targets.length}:\n${targets.map((a) => `• ${a.summary}`).join('\n')}`);
+    return true;
+  }
 
   await typing(chatId);
-  const run = await approvals.runApproved(id);
-  await send(chatId, run.ok ? `Done — ${approved.action.summary}` : `Failed: ${run.error}`);
+  const lines = [];
+  for (const a of targets) {
+    const approved = approvals.approve(a.id);
+    if (!approved.ok) { lines.push(`Could not approve — ${a.summary}: ${approved.error}`); continue; }
+    const run = await approvals.runApproved(a.id);
+    lines.push(run.ok ? `Done — ${a.summary}` : `Failed — ${a.summary}: ${run.error}`);
+  }
+  await send(chatId, lines.join('\n'));
   return true;
 }
 
-/** Surface anything the model queued during the turn. */
-async function announcePending(chatId) {
+/**
+ * Surface only what the model queued during *this* turn. Older pending
+ * actions are not re-listed — if they were ignored once they should not nag;
+ * they stay reachable through \pending until they expire.
+ */
+async function announcePending(chatId, seenBefore) {
   const pending = approvals.list('pending');
-  if (!pending.length) return;
+  const fresh = pending.filter((a) => !seenBefore.has(a.id));
+  if (!fresh.length) return;
+  const older = pending.length - fresh.length;
   await send(chatId, 'Waiting on you:\n'
-    + pending.map((a) => `${a.id}  ${a.summary}${a.detail ? `\n   ${a.detail.slice(0, 300)}` : ''}`).join('\n\n')
-    + '\n\nReply "yes <id>" to go ahead, "no <id>" to drop it.');
+    + fresh.map((a) => `${a.summary}${a.detail ? `\n   ${a.detail.slice(0, 300)}` : ''}`).join('\n\n')
+    + '\n\nReply "yes" to go ahead or "no" to drop it.'
+    + (fresh.length > 1 ? ' Either word answers all of the above; add an id from \\pending to pick one.' : '')
+    + (older ? `\n(${older} older action(s) still pending — \\pending to see them.)` : ''));
 }
 
 /* ---------------- main loop ---------------- */
@@ -408,12 +428,13 @@ async function handleMessage(msg) {
     if (await handleApproval(chatId, text)) return;
 
     await typing(chatId);
+    const seenBefore = new Set(approvals.list('pending').map((a) => a.id));
     const keepAlive = setInterval(() => typing(chatId), 5000);
     const result = await runClaude(chatId, text);
     clearInterval(keepAlive);
 
     await send(chatId, result.text);
-    await announcePending(chatId);
+    await announcePending(chatId, seenBefore);
   } catch (err) {
     console.error(err);
     await send(chatId, `Bridge error: ${err.message}`).catch(() => {});

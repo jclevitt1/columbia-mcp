@@ -73,9 +73,14 @@ npm run bridge
 \pending   actions waiting on me
 \update    git pull + restart the bridge (remote deploy from the phone)
 \help
-yes <id>   approve a queued action   (bare "yes" works if only one is pending)
-no <id>    drop it
+yes        approve everything pending and run it
+no         drop everything pending — it will not be asked again
+yes <id>   pick one out of several (ids from \pending)
 ```
+
+Only actions queued during the current turn are announced. Anything left
+unanswered stays reachable through `\pending` for 24 hours but is not
+re-listed after every message.
 
 ### Updating the Mini from anywhere
 
