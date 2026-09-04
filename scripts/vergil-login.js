@@ -15,9 +15,13 @@ loadEnv(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
  * afterwards. Re-run whenever CAS expires.
  */
 console.log(`Opening a browser against the persistent profile at:\n  ${PATHS.browserProfile}\n`);
-console.log('Sign in with your UNI + Duo. This script exits once you are through.\n');
+console.log('Sign in with your UNI + Duo. This script exits once you are through.');
+console.log('It visits Vergil and then SSOL; the second should carry through on its own.\n');
 
 const result = await vergil.login({});
-console.log(result.ok ? `Logged in. Landed on: ${result.url}` : `Failed: ${result.error}`);
+for (const step of result.steps) {
+  console.log(step.ok ? `ok    ${step.startUrl} -> ${step.url}` : `FAIL  ${step.startUrl}: ${step.error}`);
+}
+console.log(result.ok ? '\nLogged in.' : '\nSome hosts did not authenticate.');
 await vergil.closeContext();
 process.exit(result.ok ? 0 : 1);

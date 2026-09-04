@@ -82,6 +82,45 @@ export async function browse(url, { waitFor = null, timeoutMs = 45000 } = {}) {
     }
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
 
+    // innerText only sees what is visible, so accordion bodies (Columbia's
+    // "Expand all" sections) read as empty. Open anything collapsed first.
+    await page.evaluate(() => {
+      // 1. Native <details> elements
+      document.querySelectorAll('details:not([open])').forEach((d) => { d.open = true; });
+
+      // 2. Click any "Expand All" / "Show All" buttons first (single click opens everything)
+      for (const el of document.querySelectorAll('button, a, [role="button"]')) {
+        if (/expand\s*all|show\s*all/i.test(el.textContent)) {
+          try { el.click(); } catch {}
+        }
+      }
+
+      // 3. ARIA accordions / toggles
+      document.querySelectorAll('[aria-expanded="false"]').forEach((el) => {
+        try { el.click(); } catch {}
+      });
+
+      // 4. Bootstrap collapse triggers (both BS4 and BS5)
+      document.querySelectorAll('[data-toggle="collapse"], [data-bs-toggle="collapse"]').forEach((el) => {
+        if (el.classList.contains('collapsed')) {
+          try { el.click(); } catch {}
+        }
+      });
+
+      // 5. Force-show hidden collapse targets by class
+      document.querySelectorAll('.collapse:not(.show), .accordion-collapse:not(.show)').forEach((el) => {
+        el.classList.add('show');
+        el.style.display = '';
+        el.style.height = 'auto';
+      });
+
+      // 6. Inactive tab panes — make all visible so their text is captured
+      document.querySelectorAll('.tab-pane:not(.active)').forEach((el) => {
+        el.classList.add('active', 'show');
+      });
+    }).catch(() => {});
+    await page.waitForTimeout(1000);
+
     const data = await page.evaluate(() => {
       const text = document.body ? document.body.innerText : '';
       const links = Array.from(document.querySelectorAll('a[href]'))
@@ -96,7 +135,11 @@ export async function browse(url, { waitFor = null, timeoutMs = 45000 } = {}) {
       title: data.title,
       text: data.text.replace(/\n{3,}/g, '\n\n').trim().slice(0, 20000),
       links: data.links,
-      needsLogin: /log ?in|uni|duo|authenticate/i.test(data.title),
+      // Landing on CAS is the reliable signal. The title check is a fallback,
+      // word-bounded so "University" and "Unit" stop matching the bare "uni".
+      needsLogin:
+        /cas\.columbia\.edu|\/cas\/login/i.test(page.url()) ||
+        /\blog ?in\b|\bUNI\b|\bduo\b|\bauthenticat/i.test(data.title),
     };
   } finally {
     await page.close().catch(() => {});
@@ -114,28 +157,65 @@ async function settleChallenge(page, timeoutMs) {
 }
 
 /**
+ * Hosts that need their own session in the profile. Vergil and SSOL do not
+ * share one: authenticating at Vergil leaves SSOL still redirecting to CAS,
+ * which is why the financial pages stayed unreachable. Visiting both in the
+ * same run costs one Duo tap, because CAS single sign-on carries the second
+ * visit through on its own.
+ */
+const LOGIN_TARGETS = [
+  'https://vergil.registrar.columbia.edu/',
+  'https://ssol.columbia.edu/',
+];
+
+/**
  * Open a login window and block until Jeremy has authenticated by hand.
  *
  * Run this once per profile (and again whenever CAS expires). Duo cannot and
  * should not be automated — the whole point of the second factor is that a
  * human approves it.
  */
-export async function login({ startUrl = 'https://vergil.registrar.columbia.edu/', timeoutMs = 300000 } = {}) {
+export async function login({ startUrl = null, timeoutMs = 300000 } = {}) {
+  const targets = startUrl ? [startUrl] : LOGIN_TARGETS;
   const ctx = await getContext();
   const page = await ctx.newPage();
+  const steps = [];
+  for (const target of targets) {
+    steps.push(await authenticateAt(page, target, timeoutMs));
+  }
+  return { ok: steps.every((s) => s.ok), steps };
+}
+
+async function authenticateAt(page, startUrl, timeoutMs) {
   await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
+  await settleChallenge(page, 30000);
+
+  // Phase 1: wait until we see a login page (CAS/Duo) or are already past it.
+  // The initial page may show a "Login" button that hasn't been clicked yet —
+  // we must not exit before the user has gone through CAS.
+  let sawLogin = false;
   const deadline = Date.now() + timeoutMs;
+  // When single sign-on carries a later host through, no login page ever
+  // appears. Without a grace period that case would block until timeout.
+  const graceUntil = Date.now() + 8000;
+
   while (Date.now() < deadline) {
     const url = page.url();
     const title = await page.title().catch(() => '');
-    const done = !/cas\.columbia\.edu|duosecurity|just a moment/i.test(`${url} ${title}`);
-    if (done) {
+    const combined = `${url} ${title}`;
+    const onLoginPage = /cas\.columbia\.edu|duosecurity|just a moment|log ?in/i.test(combined);
+
+    if (onLoginPage) {
+      sawLogin = true;
+    } else if (sawLogin || Date.now() > graceUntil) {
+      // Phase 2: we were on CAS/Duo and now we're past it — done.
       await page.waitForTimeout(2000);
-      return { ok: true, url: page.url(), title: await page.title() };
+      return { ok: true, startUrl, url: page.url(), title: await page.title().catch(() => '') };
     }
+    // If we haven't seen CAS yet, keep waiting for the user to click Login.
     await page.waitForTimeout(2000);
   }
-  return { ok: false, error: 'timed out waiting for manual login' };
+  return { ok: false, startUrl, error: 'timed out waiting for manual login' };
 }
 
 /**
