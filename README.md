@@ -98,6 +98,59 @@ Mini reachable on public HTTPS, which this whole design avoids, and a poll
 would restart the bridge on its own schedule instead of yours. Messages are
 handled one at a time, so `\update` can never land mid-conversation.
 
+## Keeping credentials alive
+
+Five credentials keep this thing working, and only one of them publishes an
+expiry. Probed 2026-09-04:
+
+| Credential | Real expiry? | What can be known |
+|---|---|---|
+| `cf_clearance` cookie | yes — `expires_utc` in the cookie DB | a true countdown |
+| CAS / SSOL session | no | session cookies, no expiry field; server decides |
+| Google refresh token | no | lifetime depends on OAuth publishing status |
+| Canvas access token | no | `/users/self` returns 200 and no expiry metadata |
+| Telegram bot token | n/a | does not expire |
+
+So `auth-sweep` reports `ok` / `warn` / `fail` / **`unknown`**, and treats
+`unknown` as a real answer rather than rounding it to "fine". It alerts on
+`fail` and `warn` only — never on `unknown`, which means "could not
+determine" and is not worth waking someone at 8am.
+
+```
+columbia-sweep                     # status, no browser, no alert unless there is a problem
+columbia-sweep -- --always         # alert even when healthy
+columbia-sweep -- --json           # machine-readable
+columbia-sweep -- --probe-vergil   # real Vergil verdict; opens a browser window
+columbia-auth                      # re-run every interactive auth, in one pass
+```
+
+A LaunchAgent runs the sweep at 08:00 and 20:00 and messages the **alert
+bot** when something needs attention.
+
+### Why a second bot
+
+`ALERT_BOT_TOKEN` is deliberately not `TELEGRAM_BOT_TOKEN`. The main bot is
+one of the things being watched, and a monitor that dies with the thing it
+monitors is not a monitor. A separate token means an auth alert still arrives
+if the bridge's own token is revoked.
+
+### Why the Vergil probe is opt-in
+
+Headless Chromium does not clear Columbia's Cloudflare managed challenge.
+Measured 2026-09-04: both hosts sat on `Just a moment...` until timeout, and
+`needsLogin` still read `false` — a headless sweep would report "Vergil
+healthy" while fully blocked. The scheduled job therefore never launches a
+browser; it reads cookie metadata from a copy of the DB instead. Ask for a
+real verdict with `--probe-vergil`.
+
+### The CAS session is more fragile than it looks
+
+The cookies holding a CAS login (`PF`, `__Host-JSESSIONID`) are *session*
+cookies, not persistent ones. Closing the browser context cleanly purges
+them, so a tidy shutdown costs you the login and a fresh Duo tap. This is why
+the sweep treats their **absence as definitive** (`fail`) but their presence
+as merely `unknown` — the asymmetry is the whole point.
+
 ## Layout
 
 ```
@@ -111,10 +164,13 @@ src/tools/gdocs.js      Drive search, Docs/Sheets read, gated writes
 src/tools/gcal.js       Calendar read, gated create/delete
 src/executors.js        the "apply" half of every gated write, shared by both processes
 src/updater.js          \update: fetch, ff-only, npm install, restart
-src/mcp/server.js       29 tools over stdio
+src/authcheck.js        credential checks; `unknown` is a first-class result
+src/mcp/server.js       34 tools over stdio
 src/bridge/telegram.js  long-poll loop, spawns claude -p
 scripts/doctor.js       preflight — run this first
-launchd/                keep the bridge alive across reboots
+scripts/auth-sweep.js   twice-daily credential sweep, alerts over the second bot
+scripts/columbia-auth.sh  re-run every interactive auth in one pass
+launchd/                keep the bridge alive; run the sweep on a schedule
 ```
 
 ## Status

@@ -13,7 +13,9 @@
     "vergil-login": "node scripts/vergil-login.js",
     "doctor": "node scripts/doctor.js",
     "gmail-auth": "node scripts/gmail-auth.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "auth-sweep": "node scripts/auth-sweep.js",
+    "columbia-auth": "bash scripts/columbia-auth.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

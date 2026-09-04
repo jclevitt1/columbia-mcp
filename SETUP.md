@@ -205,3 +205,69 @@ afterwards to confirm the sha. See the README for what it refuses to do.
   never send. If it ever sends without your `yes`, that's a bug, and a serious
   one. Nothing should reach `approved` except through the bridge.
 - Text `\clear`, then ask a follow-up — it should have forgotten.
+
+## 6. Credential sweep — optional, 5 minutes
+
+The bridge depends on five credentials and only one of them publishes an
+expiry, so the sweep is a liveness monitor rather than a countdown. It runs
+headless and never opens a browser.
+
+### 6a. Create the alert bot
+
+A **second** bot, separate from the bridge's. The bridge's own token is one of
+the things being watched, and a monitor that dies with the thing it monitors
+is not a monitor.
+
+1. Message `@BotFather`, send `/newbot`, name it something like
+   `columbia alerts`.
+2. Copy the token into `ALERT_BOT_TOKEN` in `.env`.
+3. Message your new bot once — Telegram will not let it write to you first.
+4. Put your chat id (the same one as `TELEGRAM_OWNER_CHAT_ID`) in
+   `ALERT_CHAT_ID`.
+
+Confirm it can reach you:
+
+```bash
+npm run auth-sweep -- --always
+```
+
+That sends a digest even when everything is healthy. Leave the two variables
+blank and the sweep still runs and prints — it just never sends.
+
+### 6b. Schedule it
+
+```bash
+cp launchd/dev.jclevitt.columbia-auth-sweep.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.jclevitt.columbia-auth-sweep.plist
+```
+
+08:00 and 20:00 daily, alerting only on `fail` and `warn`. Silence means
+healthy. Run it on demand with `launchctl kickstart` or just `columbia-sweep`.
+
+### 6c. Shell aliases
+
+```bash
+alias columbia-auth='bash "$HOME/columbia-mcp/scripts/columbia-auth.sh"'
+alias columbia-sweep='npm --prefix "$HOME/columbia-mcp" run --silent auth-sweep --'
+```
+
+`columbia-auth` re-runs every interactive authentication in one pass — Google
+OAuth, then CAS for Vergil and SSOL. Both open browser windows and Duo needs a
+tap, so it only works at the machine itself.
+
+### What the sweep cannot tell you
+
+Vergil and SSOL. Headless Chromium does not clear Columbia's Cloudflare
+managed challenge — measured 2026-09-04, both hosts sat on `Just a moment...`
+until timeout while `needsLogin` still read `false`. Rather than report a
+verdict it cannot support, the sweep reads cookie metadata and marks the CAS
+session `unknown`. For a real answer:
+
+```bash
+columbia-sweep -- --probe-vergil     # opens a browser window
+```
+
+One asymmetry worth understanding: the sweep treats **missing** CAS cookies as
+a definite failure, but their presence as merely unverified. `PF` and
+`__Host-JSESSIONID` are session cookies — closing a browser context cleanly
+deletes them, and their absence reliably means there is no login to use.

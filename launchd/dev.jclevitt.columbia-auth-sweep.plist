@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Twice-daily credential sweep. Alerts over the separate alert bot, and only
+  when something is expired, failing, or inside its warning window.
+
+  Install:
+    cp launchd/dev.jclevitt.columbia-auth-sweep.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.jclevitt.columbia-auth-sweep.plist
+
+  An Agent rather than a Daemon so it can read ~/.columbia-mcp. Unlike the
+  bridge it never opens a browser: the Vergil probe is opt-in (--probe-vergil)
+  precisely so this job stays headless and never fights the bridge for the
+  Chromium profile lock.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.jclevitt.columbia-auth-sweep</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/jeremylevitt/columbia-mcp/scripts/auth-sweep.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jeremylevitt/columbia-mcp</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- 08:00 and 20:00 local. Morning catches anything that died overnight;
+       evening leaves time to fix it before the next day's classes. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key><integer>8</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key><integer>20</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+  </array>
+
+  <!-- One-shot, so no KeepAlive: relaunching a finished sweep would loop. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jeremylevitt/.columbia-mcp/logs/auth-sweep.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jeremylevitt/.columbia-mcp/logs/auth-sweep.err.log</string>
+</dict>
+</plist>
