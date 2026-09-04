@@ -211,10 +211,21 @@ function extractBody(part) {
   return '';
 }
 
+/**
+ * MIME headers are US-ASCII only. The charset declaration below covers the
+ * body, not the headers, so a non-ASCII subject has to be an RFC 2047
+ * encoded-word or receiving clients read the raw UTF-8 bytes as latin-1
+ * and an em dash arrives as mojibake.
+ */
+function encodeHeader(value) {
+  if (!/[^\x20-\x7e]/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+}
+
 async function apiCreateDraft({ to, subject, body }) {
   const gmail = await gmailClient();
   const raw = Buffer.from(
-    `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${body}`
+    `To: ${to}\r\nSubject: ${encodeHeader(subject)}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${body}`
   ).toString('base64url');
   const { data } = await gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } });
   return { draftId: data.id, to, subject };
