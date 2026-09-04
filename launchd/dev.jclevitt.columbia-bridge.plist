@@ -18,12 +18,14 @@
 
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
     <string>/opt/homebrew/bin/node</string>
-    <string>/Users/jeremylevitt/workspace/Columbia/columbia-mcp/src/bridge/telegram.js</string>
+    <string>/Users/jeremylevitt/columbia-mcp/src/bridge/telegram.js</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/jeremylevitt/workspace/Columbia/columbia-mcp</string>
+  <string>/Users/jeremylevitt/columbia-mcp</string>
 
   <key>EnvironmentVariables</key>
   <dict>
