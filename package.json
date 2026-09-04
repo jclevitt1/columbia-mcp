@@ -12,7 +12,8 @@
     "bridge": "node src/bridge/telegram.js",
     "vergil-login": "node scripts/vergil-login.js",
     "doctor": "node scripts/doctor.js",
-    "gmail-auth": "node scripts/gmail-auth.js"
+    "gmail-auth": "node scripts/gmail-auth.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
