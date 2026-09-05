@@ -103,13 +103,20 @@ export const getEvent = guard(async ({ calendarId = 'primary', eventId }) => {
 
 /* ---------------- writes: applied only after approval ---------------- */
 
-/** Build the API body from the flat shape the model gives us. */
-function eventBody({ summary, start, end, allDay = false, description, location }) {
+/**
+ * Build the API body from the flat shape the model gives us.
+ *
+ * `recurrence` is passed to Google verbatim as RRULE/EXDATE/RDATE lines. A
+ * class that meets twice a week for a semester is one event with one RRULE,
+ * not thirty events — which also keeps it to a single approval.
+ */
+function eventBody({ summary, start, end, allDay = false, description, location, recurrence }) {
   const tz = TIMEZONE();
   const when = allDay
     ? { start: { date: start.slice(0, 10) }, end: { date: (end || start).slice(0, 10) } }
     : { start: { dateTime: start, timeZone: tz }, end: { dateTime: end, timeZone: tz } };
-  return { summary, description, location, ...when };
+  const repeat = recurrence?.length ? { recurrence } : {};
+  return { summary, description, location, ...when, ...repeat };
 }
 
 export const applyCreateEvent = guard(async ({ calendarId = 'primary', ...fields }) => {

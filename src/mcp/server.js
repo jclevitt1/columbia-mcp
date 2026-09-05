@@ -327,21 +327,31 @@ tool('calendar_event', {
 
 tool('calendar_request_create', {
   title: 'Ask Jeremy to approve adding an event',
-  description: 'Queues a new calendar event for approval. This tool CANNOT create the event — Jeremy confirms over Telegram first. Give start/end as ISO 8601 with offset, or set allDay with YYYY-MM-DD dates.',
+  description: 'Queues a new calendar event for approval. This tool CANNOT create the event — Jeremy confirms over Telegram first. Give start/end as ISO 8601 with offset, or set allDay with YYYY-MM-DD dates. For anything repeating, pass recurrence rather than queuing one event per occurrence: start/end describe the FIRST occurrence only.',
   inputSchema: {
     summary: z.string().describe('Event title'),
-    start: z.string().describe('ISO 8601 datetime, or YYYY-MM-DD when allDay'),
+    start: z.string().describe('ISO 8601 datetime of the first occurrence, or YYYY-MM-DD when allDay'),
     end: z.string().optional().describe('ISO 8601 datetime; for allDay the exclusive end date (defaults to start)'),
     allDay: z.boolean().optional(),
     location: z.string().optional(),
     description: z.string().optional(),
+    recurrence: z.array(z.string()).optional().describe(
+      'RFC 5545 lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261214T235959Z", '
+      + '"EXDATE;TZID=America/New_York:20261125T131000"]. UNTIL must be UTC. Use EXDATE to skip holidays.'
+    ),
     calendarId: z.string().optional().describe('Default "primary"'),
   },
-}, ({ summary, start, end, allDay, location, description, calendarId }) => queue({
+}, ({ summary, start, end, allDay, location, description, recurrence, calendarId }) => queue({
   kind: 'calendar.create',
-  summary: `Add "${summary}" ${allDay ? `on ${start}` : `at ${start}`}${location ? ` @ ${location}` : ''}`,
-  detail: [end && !allDay ? `until ${end}` : '', description || ''].filter(Boolean).join('\n').slice(0, 500),
-  payload: { summary, start, end: end || (allDay ? start : undefined), allDay: Boolean(allDay), location, description, calendarId: calendarId || 'primary' },
+  // A repeating event is one approval covering many occurrences, so the rule
+  // has to be visible in the summary he reads on his phone.
+  summary: `Add "${summary}" ${allDay ? `on ${start}` : `at ${start}`}${recurrence?.length ? ' (repeating)' : ''}${location ? ` @ ${location}` : ''}`,
+  detail: [
+    end && !allDay ? `until ${end}` : '',
+    ...(recurrence || []),
+    description || '',
+  ].filter(Boolean).join('\n').slice(0, 500),
+  payload: { summary, start, end: end || (allDay ? start : undefined), allDay: Boolean(allDay), location, description, recurrence, calendarId: calendarId || 'primary' },
 }));
 
 tool('calendar_request_delete', {
