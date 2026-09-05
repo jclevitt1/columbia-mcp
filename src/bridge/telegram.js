@@ -7,6 +7,7 @@ import { CONFIG, ensureHome, loadEnv } from '../config.js';
 import * as approvals from '../approvals.js';
 import * as sessions from '../sessions.js';
 import * as updater from '../updater.js';
+import * as authcheck from '../authcheck.js';
 import { registerAll as registerExecutors } from '../executors.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -269,6 +270,7 @@ const HELP = `Columbia bot — commands
 \\status    session info + config health + running version
 \\pending   list actions waiting on you
 \\update    pull the latest from GitHub and restart the bridge
+\\sweep     credential status. off | off 3d | on | now
 \\help      this
 
 Approving: reply  yes  or  no
@@ -308,6 +310,11 @@ async function handleCommand(chatId, text) {
     return true;
   }
 
+  if (cmd === '\\sweep' || cmd.startsWith('\\sweep ')) {
+    await handleSweep(chatId, cmd.slice('\\sweep'.length).trim());
+    return true;
+  }
+
   if (cmd === '\\pending') {
     const pending = approvals.list('pending');
     await send(chatId, pending.length
@@ -317,6 +324,77 @@ async function handleCommand(chatId, text) {
   }
 
   return false;
+}
+
+/**
+ * `\sweep`: read or change the credential sweep from the phone.
+ *
+ * Turning alerts off has to be reachable from here, because the moment you
+ * want them off is the moment you are not at the Mini. An open-ended `off`
+ * is honoured but reported as such every time, since a silenced sweep can sit
+ * on an expired credential indefinitely; `off 3d` is the safer habit.
+ *
+ * Muting never stops the sweep running — only sending — so `\sweep now`
+ * still gives a straight answer while muted.
+ */
+async function handleSweep(chatId, arg) {
+  if (arg === 'on') {
+    authcheck.unmuteAlerts();
+    await send(chatId, 'Alerts back on.');
+    return;
+  }
+
+  if (arg === 'off' || arg.startsWith('off ')) {
+    const rest = arg.slice(3).trim();
+    if (!rest) {
+      authcheck.muteAlerts(null);
+      await send(chatId, 'Alerts OFF until you send \\sweep on. The sweep keeps running and logging; it just will not message you.');
+      return;
+    }
+    const ms = authcheck.parseDuration(rest);
+    if (!ms) {
+      await send(chatId, `Could not read "${rest}" as a duration. Try 12h, 3d, 2w — or bare \\sweep off for indefinite.`);
+      return;
+    }
+    authcheck.muteAlerts(Date.now() + ms);
+    await send(chatId, `Alerts snoozed for ${rest}. They come back on by themselves after that.`);
+    return;
+  }
+
+  if (arg === 'now') {
+    await send(chatId, 'Running the sweep…');
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'auth-sweep.js'), '--json'], {
+        cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      let buf = '';
+      const timer = setTimeout(() => { child.kill(); resolve(null); }, 90_000);
+      child.stdout.on('data', (d) => { buf += d; });
+      child.on('close', () => { clearTimeout(timer); try { resolve(JSON.parse(buf)); } catch { resolve(null); } });
+      child.on('error', () => { clearTimeout(timer); resolve(null); });
+    });
+    if (!out) { await send(chatId, 'Sweep failed to run. Check auth-sweep.err.log at the Mini.'); return; }
+    const mark = { ok: 'ok', warn: '!!', fail: 'XX', unknown: '??' };
+    await send(chatId, [
+      `Overall: ${out.overall}`,
+      authcheck.describeMute(out.mute),
+      '',
+      ...out.checks.map((c) => `${mark[c.status]} ${c.name}\n   ${c.detail}`),
+    ].join('\n'));
+    return;
+  }
+
+  const state = authcheck.loadState();
+  await send(chatId, [
+    authcheck.describeMute(authcheck.alertsMuted()),
+    state.lastRunAt ? `Last run: ${new Date(state.lastRunAt).toLocaleString()}` : 'Last run: never',
+    'Scheduled: 08:00 and 20:00 daily.',
+    '',
+    '\\sweep now      run it and report',
+    '\\sweep off      alerts off until you turn them on',
+    '\\sweep off 3d   snooze, then back on by itself',
+    '\\sweep on       alerts back on',
+  ].join('\n'));
 }
 
 /**

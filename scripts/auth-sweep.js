@@ -108,17 +108,24 @@ const overall = auth.worst(checks);
 const bad = auth.problems(checks);
 
 if (JSON_OUT) {
-  console.log(JSON.stringify({ at: new Date(now).toISOString(), overall, checks }, null, 2));
+  console.log(JSON.stringify({ at: new Date(now).toISOString(), overall, mute: auth.alertsMuted(now), checks }, null, 2));
   process.exit(overall === 'fail' ? 2 : overall === 'warn' ? 1 : 0);
 }
 
 const report = auth.formatReport(checks);
 if (!QUIET) {
-  console.log(`Columbia auth sweep — ${new Date(now).toLocaleString()}\n`);
+  console.log(`Columbia auth sweep — ${new Date(now).toLocaleString()}`);
+  console.log(`${auth.describeMute(auth.alertsMuted(now), now)}\n`);
   console.log(report);
 }
 
-if (bad.length || ALWAYS) {
+const mute = auth.alertsMuted(now);
+
+// A mute silences sending, never checking: the sweep still runs, still logs,
+// and still exits non-zero, so a muted problem is visible the moment he asks.
+if ((bad.length || ALWAYS) && mute.muted && !ALWAYS) {
+  if (!QUIET) console.log(`\n${auth.describeMute(mute, now)} ${bad.length} problem(s) NOT sent.`);
+} else if (bad.length || ALWAYS) {
   const header = bad.length
     ? `Columbia auth: ${bad.length} item(s) need attention`
     : 'Columbia auth: all credentials healthy';

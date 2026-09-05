@@ -139,6 +139,60 @@ describe('authcheck', () => {
     });
   });
 
+  describe('parseDuration', () => {
+    it('reads the forms he would actually type', () => {
+      assert.equal(auth.parseDuration('90m'), 90 * 60_000);
+      assert.equal(auth.parseDuration('12h'), 12 * 3_600_000);
+      assert.equal(auth.parseDuration('3d'), 3 * 86_400_000);
+      assert.equal(auth.parseDuration('2w'), 2 * 604_800_000);
+    });
+
+    it('tolerates spacing and case', () => {
+      assert.equal(auth.parseDuration(' 3 D '), 3 * 86_400_000);
+    });
+
+    it('returns null for anything it cannot read', () => {
+      for (const bad of ['', 'soon', '3', 'd', '3y', null, undefined]) {
+        assert.equal(auth.parseDuration(bad), null, `expected null for ${JSON.stringify(bad)}`);
+      }
+    });
+  });
+
+  describe('alert mute', () => {
+    it('is off by default', () => {
+      auth.unmuteAlerts();
+      assert.equal(auth.alertsMuted(NOW).muted, false);
+    });
+
+    it('mutes open-endedly and reports it as such every time', () => {
+      auth.muteAlerts(null);
+      const m = auth.alertsMuted(NOW);
+      assert.equal(m.muted, true);
+      assert.equal(m.until, null);
+      assert.match(auth.describeMute(m, NOW), /OFF until you turn them back on/);
+      auth.unmuteAlerts();
+    });
+
+    // The safer habit: a snooze that comes back on by itself.
+    it('honours a snooze and lifts it once the time passes', () => {
+      auth.muteAlerts(NOW + 3 * DAY);
+      assert.equal(auth.alertsMuted(NOW).muted, true);
+      assert.equal(auth.alertsMuted(NOW + 2 * DAY).muted, true);
+
+      const after = auth.alertsMuted(NOW + 4 * DAY);
+      assert.equal(after.muted, false);
+      assert.equal(after.expired, true);
+      assert.match(auth.describeMute(after, NOW + 4 * DAY), /snooze just expired/);
+      auth.unmuteAlerts();
+    });
+
+    it('counts down while snoozed', () => {
+      auth.muteAlerts(NOW + 2 * DAY);
+      assert.match(auth.describeMute(auth.alertsMuted(NOW), NOW), /snoozed for another 2\.0 days/);
+      auth.unmuteAlerts();
+    });
+  });
+
   describe('rollup', () => {
     const c = (status) => ({ name: 'x', status, detail: '' });
 

@@ -70,6 +70,60 @@ export function fingerprint(secret) {
   return crypto.createHash('sha256').update(secret).digest('hex').slice(0, 16);
 }
 
+/* ---------------- alert mute ---------------- */
+
+/**
+ * Whether the sweep is allowed to send.
+ *
+ * Deliberately its own file rather than a key in auth-sweep.json. The bridge
+ * writes this when he says `\sweep off` from his phone, and the sweep writes
+ * the state file; sharing one file would race, and a clobbered auth-sweep.json
+ * would silently reset the Google first-seen timestamp that the whole
+ * lifetime-learning idea depends on.
+ */
+export const MUTE_FILE = path.join(PATHS.home, 'alerts-mute.json');
+
+/** ms for "3d", "12h", "90m", "2w". Null when it isn't a duration. */
+export function parseDuration(text) {
+  const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w)$/i.exec(String(text ?? '').trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2].toLowerCase()];
+  return Math.round(n * unit);
+}
+
+/**
+ * @param {number|null} untilMs absolute wake time, or null to mute until he
+ *   turns it back on. An open-ended mute is a real risk — a credential can
+ *   expire behind it — so callers should prefer a duration and the status
+ *   line always says which one is in force.
+ */
+export function muteAlerts(untilMs = null) {
+  ensureHome();
+  writeJson(MUTE_FILE, { mutedUntil: untilMs, setAt: Date.now() });
+}
+
+export function unmuteAlerts() {
+  ensureHome();
+  writeJson(MUTE_FILE, {});
+}
+
+/** @returns {{muted:boolean, until:number|null, expired?:boolean}} */
+export function alertsMuted(now = Date.now()) {
+  const m = readJson(MUTE_FILE, {});
+  if (!('mutedUntil' in m)) return { muted: false, until: null };
+  if (m.mutedUntil === null) return { muted: true, until: null };
+  if (now < m.mutedUntil) return { muted: true, until: m.mutedUntil };
+  return { muted: false, until: null, expired: true };
+}
+
+/** One line describing the mute state, for status output. */
+export function describeMute(state, now = Date.now()) {
+  if (!state.muted) return state.expired ? 'Alerts on (a snooze just expired).' : 'Alerts on.';
+  if (state.until === null) return 'Alerts OFF until you turn them back on.';
+  return `Alerts snoozed for another ${humanDuration(state.until - now)}.`;
+}
+
 /* ---------------- Google ---------------- */
 
 /**
