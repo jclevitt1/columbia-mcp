@@ -61,6 +61,39 @@ export function profileExists() {
 }
 
 /**
+ * Undo one layer of HTML escaping in scraped text.
+ *
+ * innerText already decodes entities, so text reaching us should be plain.
+ * Columbia's pages double-encode: the source carries `&amp;amp;`, the browser
+ * renders `&amp;`, and innerText faithfully hands us that literal string. So
+ * "Neural Networks &amp; Deep Learning" is what a scrape returns, and what
+ * then lands in a calendar event title.
+ *
+ * One pass, alternation rather than chained replaces, so `&amp;lt;` decodes to
+ * `&lt;` and not all the way to `<` — decoding twice would be a different bug.
+ */
+const ENTITIES = {
+  '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"',
+  '&apos;': "'", '&#39;': "'", '&nbsp;': ' ',
+};
+
+export function decodeEntities(value) {
+  if (typeof value !== 'string' || !value.includes('&')) return value;
+  return value.replace(
+    /&(?:amp|lt|gt|quot|apos|nbsp|#39|#x[0-9a-f]{1,6}|#\d{1,7});/gi,
+    (m) => {
+      const named = ENTITIES[m.toLowerCase()];
+      if (named !== undefined) return named;
+      const hex = m.match(/^&#x([0-9a-f]{1,6});$/i);
+      if (hex) return String.fromCodePoint(parseInt(hex[1], 16));
+      const dec = m.match(/^&#(\d{1,7});$/);
+      if (dec) return String.fromCodePoint(Number(dec[1]));
+      return m;
+    },
+  );
+}
+
+/**
  * Navigate and return the page as readable text plus its links.
  *
  * This is deliberately generic rather than a per-page scraper. Vergil is a
@@ -132,9 +165,9 @@ export async function browse(url, { waitFor = null, timeoutMs = 45000 } = {}) {
 
     return {
       url: page.url(),
-      title: data.title,
-      text: data.text.replace(/\n{3,}/g, '\n\n').trim().slice(0, 20000),
-      links: data.links,
+      title: decodeEntities(data.title),
+      text: decodeEntities(data.text.replace(/\n{3,}/g, '\n\n').trim().slice(0, 20000)),
+      links: data.links.map((l) => ({ ...l, text: decodeEntities(l.text) })),
       // Landing on CAS is the reliable signal. The title check is a fallback,
       // word-bounded so "University" and "Unit" stop matching the bare "uni".
       needsLogin:
@@ -298,7 +331,16 @@ export async function searchCourses({ query, term = '', limit = 25 }) {
       return m ? Number(m[1]) : null;
     });
 
-    return { query, term: term || 'all', termCode: code || null, totalResults: countText, returned: results.length, results };
+    // The catalog is the same double-encoded source, so decode the fields a
+    // caller actually reads back out.
+    const decoded = results.map((r) => ({
+      ...r,
+      title: decodeEntities(r.title),
+      instructor: decodeEntities(r.instructor),
+      description: decodeEntities(r.description),
+    }));
+
+    return { query, term: term || 'all', termCode: code || null, totalResults: countText, returned: decoded.length, results: decoded };
   } finally {
     await page.close().catch(() => {});
   }
