@@ -143,13 +143,27 @@ healthy" while fully blocked. The scheduled job therefore never launches a
 browser; it reads cookie metadata from a copy of the DB instead. Ask for a
 real verdict with `--probe-vergil`.
 
-### The CAS session is more fragile than it looks
+### Watch the ticket, not the leftovers
 
-The cookies holding a CAS login (`PF`, `__Host-JSESSIONID`) are *session*
-cookies, not persistent ones. Closing the browser context cleanly purges
-them, so a tidy shutdown costs you the login and a fresh Duo tap. This is why
-the sweep treats their **absence as definitive** (`fail`) but their presence
-as merely `unknown` — the asymmetry is the whole point.
+CAS issues a ticket-granting cookie, `TGC`, on `cas.columbia.edu` when single
+sign-on succeeds. That is the credential. Everything else in the profile is
+downstream residue.
+
+The sweep originally watched `PF` (PingFederate) and `__Host-JSESSIONID`
+(Shibboleth), which was wrong in the way that matters: nothing cleans them up
+when a session dies. Measured 2026-09-05 — a stale pair sat in the profile for
+26 hours after the login they belonged to had expired, so the sweep cheerfully
+reported "session cookies present" while Vergil was refusing every request.
+`TGC` was absent throughout, and appeared the instant a real login happened.
+
+So: **no `TGC` is definitive** (`fail`, even when the downstream cookies are
+still there). A present `TGC` is `ok` but explicitly labelled as inferred from
+the ticket rather than verified against the server, and goes to `warn` past
+`CAS_STALE_HOURS`. Only `--probe-vergil` actually asks Columbia.
+
+An earlier version of this file claimed a clean `closeContext()` purges these
+session cookies. It does not — a login followed by a clean close leaves them
+in place, along with the previous run's. That claim was wrong.
 
 ## Layout
 

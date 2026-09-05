@@ -267,7 +267,9 @@ session `unknown`. For a real answer:
 columbia-sweep -- --probe-vergil     # opens a browser window
 ```
 
-One asymmetry worth understanding: the sweep treats **missing** CAS cookies as
-a definite failure, but their presence as merely unverified. `PF` and
-`__Host-JSESSIONID` are session cookies — closing a browser context cleanly
-deletes them, and their absence reliably means there is no login to use.
+One asymmetry worth understanding: the sweep keys on the CAS ticket-granting
+cookie `TGC`, and treats its **absence** as a definite failure while its
+presence is only ever reported as inferred. Do not read anything into `PF` or
+`__Host-JSESSIONID` — those linger long after the session they belonged to has
+died (26 hours, measured), which is exactly what made an earlier version of
+this check report a healthy session while Vergil refused every request.

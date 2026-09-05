@@ -95,20 +95,47 @@ describe('authcheck', () => {
   });
 
   describe('classifyCasSession', () => {
-    const session = [{ name: 'PF', host_key: 'oauth.cc.columbia.edu', has_expires: 0, creation_utc: chromeTime(NOW - 3 * 3_600_000) }];
+    const HOUR = 3_600_000;
+    const tgc = (agoMs) => ({ name: 'TGC', host_key: 'cas.columbia.edu', has_expires: 0, creation_utc: chromeTime(NOW - agoMs) });
+    const stale = [
+      { name: 'PF', host_key: 'oauth.cc.columbia.edu', has_expires: 0, creation_utc: chromeTime(NOW - 26 * HOUR) },
+      { name: '__Host-JSESSIONID', host_key: 'shibboleth.columbia.edu', has_expires: 0, creation_utc: chromeTime(NOW - 26 * HOUR) },
+    ];
 
-    // Absence is definitive; presence never is. This asymmetry is the point.
-    it('fails when no session cookies exist', () => {
-      const v = auth.classifyCasSession([], NOW);
+    // The exact state that made the old check useless: downstream cookies
+    // lingering 26h after the session they belonged to had died.
+    it('fails when the ticket is gone even though downstream cookies remain', () => {
+      const v = auth.classifyCasSession(stale, NOW);
       assert.equal(v.status, 'fail');
-      assert.match(v.detail, /nobody has logged in/);
+      assert.match(v.detail, /signed out/);
+      assert.match(v.detail, /mean nothing on their own/);
     });
 
-    it('refuses to claim ok even when cookies are present', () => {
-      const v = auth.classifyCasSession(session, NOW);
-      assert.equal(v.status, 'unknown');
-      assert.match(v.detail, /unverified/);
-      assert.match(v.detail, /3\.0 hours ago/);
+    it('fails when the profile has no cookies at all', () => {
+      assert.equal(auth.classifyCasSession([], NOW).status, 'fail');
+    });
+
+    it('is ok on a fresh ticket, while saying it is inferred not verified', () => {
+      const v = auth.classifyCasSession([tgc(2 * HOUR)], NOW);
+      assert.equal(v.status, 'ok');
+      assert.match(v.detail, /2\.0 hours ago/);
+      assert.match(v.detail, /not verified/);
+    });
+
+    it('warns once the ticket passes the staleness mark', () => {
+      const v = auth.classifyCasSession([tgc((auth.CAS_STALE_HOURS + 1) * HOUR)], NOW);
+      assert.equal(v.status, 'warn');
+      assert.match(v.detail, /probe-vergil/);
+    });
+
+    // A live ticket is what matters; leftovers alongside it change nothing.
+    it('ignores downstream cookies when a fresh ticket is present', () => {
+      const v = auth.classifyCasSession([...stale, tgc(HOUR)], NOW);
+      assert.equal(v.status, 'ok');
+    });
+
+    it('is unknown when the database could not be read', () => {
+      assert.equal(auth.classifyCasSession(null, NOW).status, 'unknown');
     });
   });
 

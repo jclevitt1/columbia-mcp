@@ -216,7 +216,33 @@ export async function checkTelegram(label, token) {
 
 /* ---------------- Vergil / SSOL cookies ---------------- */
 
-const CAS_SESSION_COOKIES = ['PF', '__Host-JSESSIONID', 'JSESSIONID'];
+/**
+ * CAS issues a ticket-granting cookie on cas.columbia.edu when single sign-on
+ * succeeds. It is the SSO credential itself, and it is the only cookie here
+ * whose presence tracked reality in both states we have observed:
+ *
+ *   2026-09-05 21:27  logged out   TGC absent, PF + JSESSIONID still present
+ *   2026-09-05 21:31  logged in    TGC present
+ *
+ * The downstream cookies are the trap. PF (PingFederate) and JSESSIONID
+ * (Shibboleth) are written by services CAS redirected through, and nothing
+ * cleans them up when the session dies — a stale pair sat in the profile for
+ * 26 hours after the login they belonged to had expired. Watching those is
+ * what made the sweep report "session cookies present" while Vergil was
+ * refusing every request.
+ */
+const CAS_TICKET_COOKIE = 'TGC';
+const CAS_DOWNSTREAM_COOKIES = ['PF', '__Host-JSESSIONID', 'JSESSIONID'];
+
+/**
+ * How long a ticket is assumed good. A heuristic, not a published figure:
+ * Columbia does not document the CAS session lifetime and it cannot be read
+ * from the cookie, which carries no expiry. One measured data point says a
+ * session established 18:59 was dead within 26 hours. Twelve hours keeps a
+ * normal day's work inside `ok` while still flagging a ticket that has almost
+ * certainly lapsed overnight.
+ */
+export const CAS_STALE_HOURS = 12;
 
 /**
  * Read cookie metadata without launching a browser.
@@ -271,19 +297,41 @@ export function classifyClearance(rows, now = Date.now()) {
  * label the rest unverified.
  */
 export function classifyCasSession(rows, now = Date.now()) {
-  if (rows === null) return { name: 'CAS / SSOL session', status: 'unknown', detail: 'Could not read the cookie database.' };
-  const session = rows.filter((r) => CAS_SESSION_COOKIES.includes(r.name));
-  if (!session.length) {
-    return { name: 'CAS / SSOL session', status: 'fail',
-      detail: 'No CAS session cookies in the profile — nobody has logged in. Run `npm run vergil-login`.' };
+  if (rows === null) {
+    return { name: 'CAS / SSOL session', status: 'unknown', detail: 'Could not read the cookie database.' };
   }
-  const newest = Math.max(...session.map((r) => chromeTimeToMs(r.creation_utc) ?? 0));
-  const hosts = [...new Set(session.map((r) => r.host_key))].join(', ');
+
+  const ticket = rows.find((r) => r.name === CAS_TICKET_COOKIE);
+  const downstream = rows.filter((r) => CAS_DOWNSTREAM_COOKIES.includes(r.name));
+
+  if (!ticket) {
+    // Definitive. Say so even when the downstream cookies are still sitting
+    // there, because that combination is exactly the expired-session case.
+    const misleading = downstream.length
+      ? ` (${downstream.map((d) => d.name).join(', ')} are still in the profile, but they outlive the session and mean nothing on their own.)`
+      : '';
+    return {
+      name: 'CAS / SSOL session', status: 'fail',
+      detail: `No CAS ticket-granting cookie — signed out.${misleading} Run \`npm run vergil-login\`.`,
+    };
+  }
+
+  const ageMs = now - (chromeTimeToMs(ticket.creation_utc) ?? now);
+  const ageHours = ageMs / 3_600_000;
+  const age = humanDuration(ageMs);
+
+  if (ageHours >= CAS_STALE_HOURS) {
+    return {
+      name: 'CAS / SSOL session', status: 'warn',
+      detail: `CAS ticket is ${age} old, past the ${CAS_STALE_HOURS}h mark where it has usually lapsed. `
+        + 'Expect a re-login. `npm run auth-sweep -- --probe-vergil` confirms it for real (opens a browser).',
+    };
+  }
+
   return {
-    name: 'CAS / SSOL session', status: 'unknown',
-    detail: `Session cookies present (${hosts}), established ${humanDuration(now - newest)} ago. `
-      + 'These carry no expiry and Columbia does not publish the server-side lifetime, so validity is '
-      + 'unverified — run `npm run auth-sweep -- --probe-vergil` for a real answer (opens a browser).',
+    name: 'CAS / SSOL session', status: 'ok',
+    detail: `CAS ticket present, issued ${age} ago. Inferred from the ticket, not verified against the server — `
+      + 'only `--probe-vergil` does that.',
   };
 }
 
